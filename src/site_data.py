@@ -182,6 +182,8 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
     warnings = []
     if stale:
         warnings.append(f"数据只到 {data_date.date()}（最近交易日 {expected_last}），以下为旧信号，请勿照做。")
+    else:
+        warnings.append(f"数据截至 {data_date.date()}；每个交易日 17:45 自动更新。红色=本策略，灰色=沪深300。")
     if hist.get("_missing"):
         warnings.append("历史绩效快照缺失：overall/yearly/trades 为空，仅展示当日信号。")
 
