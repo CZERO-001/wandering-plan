@@ -106,8 +106,19 @@ def main(argv: list[str] | None = None) -> int:
 
     plan = combo.build_plan(signals, cal, data_date, capital=a.capital)
     expected = st.get("expected")
-    stale = bool(expected and str(data_date)[:10] < expected)
-    reason = f"数据只到 {data_date.date()}，最近交易日是 {expected}" if stale else ""
+    # 以「已发布的基准数据日」为最新可得日：与之持平即视为最新（数据管道滞后时不再误报）
+    try:
+        from .site_data import _bench_series
+        bench_last = _bench_series().index.max()
+    except Exception:
+        bench_last = None
+    if bench_last is not None:
+        stale = pd.Timestamp(data_date) < pd.Timestamp(bench_last)
+        reason = (f"数据只到 {data_date.date()}，最新可得 {pd.Timestamp(bench_last).date()}"
+                  if stale else "")
+    else:
+        stale = bool(expected and str(data_date)[:10] < expected)
+        reason = f"数据只到 {data_date.date()}，最近交易日是 {expected}" if stale else ""
 
     out = config.LOG_DIR
     out.mkdir(parents=True, exist_ok=True)
