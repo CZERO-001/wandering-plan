@@ -53,16 +53,27 @@ def _deploy(html_path: Path) -> tuple[bool, str]:
         subprocess.run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
                         config.ZPC_HOST, f'powershell -NoProfile -Command New-Item -ItemType Directory -Force -Path "{config.ZPC_SITE_DIR}" | Out-Null; New-Item -ItemType Directory -Force -Path "{config.ZPC_DATA_DIR}" | Out-Null'],
                        capture_output=True, timeout=60)
-        p = subprocess.run([scp, "-q", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
-                            str(html_path), f"{config.ZPC_HOST}:{remote_file}"],
-                           capture_output=True, timeout=120, text=True)
-        if p.returncode != 0:
-            return False, f"scp rc={p.returncode} {p.stderr[:200]}"
-        j = subprocess.run([scp, "-q", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
-                            str(config.SITE_DATA_OUT), f"{config.ZPC_HOST}:{remote_data_file}"],
-                           capture_output=True, timeout=120, text=True)
-        if j.returncode != 0:
-            return False, f"scp json rc={j.returncode} {j.stderr[:200]}"
+        def _scp_atomic(local: str, remote_final: str) -> tuple[bool, str]:
+            tmp = remote_final + ".tmp"
+            p = subprocess.run([scp, "-q", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
+                                local, f"{config.ZPC_HOST}:{tmp}"],
+                               capture_output=True, timeout=120, text=True)
+            if p.returncode != 0:
+                return False, f"scp rc={p.returncode} {p.stderr[:200]}"
+            win_tmp = tmp.replace("/", "\\")
+            win_fin = remote_final.replace("/", "\\")
+            m = subprocess.run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
+                                config.ZPC_HOST,
+                                f'powershell -NoProfile -Command Move-Item -Force "{win_tmp}" "{win_fin}"'],
+                               capture_output=True, timeout=60, text=True)
+            return m.returncode == 0, (m.stdout or m.stderr or "")[:200]
+
+        okp, dp = _scp_atomic(str(html_path), remote_file)
+        if not okp:
+            return False, f"page {dp}"
+        okj, dj = _scp_atomic(str(config.SITE_DATA_OUT), remote_data_file)
+        if not okj:
+            return False, f"json {dj}"
         q = subprocess.run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
                             config.ZPC_HOST,
                             'powershell -NoProfile -Command "(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8901/wandering-plan/ -TimeoutSec 10).StatusCode"'],

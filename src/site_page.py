@@ -55,6 +55,21 @@ DASH_SCRIPT = """<script>
 (function(){
   "use strict";
   var WP=null;
+  var _f=window.fetch;
+  window.fetch=function(u,o){
+    var url=String(u||"");
+    if(url.indexOf("/api/wandering-plan/data")<0)return _f.apply(window,arguments);
+    function attempt(n){
+      return _f.call(window,u,o).then(function(r){
+        if(!r.ok)throw new Error("http "+r.status);
+        return r.clone().json().then(function(){return r;}).catch(function(){throw new Error("bad json")});
+      }).catch(function(e){
+        if(n<=2)return new Promise(function(res,rej){setTimeout(function(){attempt(n+1).then(res,rej)},500)});
+        throw e;
+      });
+    }
+    return attempt(0);
+  };
   function esc(v){var s=String(v===null||v===undefined?"":v);return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
   function fmtPct(v){if(v===null||v===undefined||isNaN(Number(v)))return "-";var n=Number(v)*100;return (n>=0?"+":"")+n.toFixed(2)+"%"}
   function fmtMoney(v){if(v===null||v===undefined||isNaN(Number(v)))return "-";var n=Number(v);return Math.abs(n)>=10000?(n/10000).toFixed(2)+"万":n.toFixed(0)}
