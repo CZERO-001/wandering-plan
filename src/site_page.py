@@ -15,6 +15,7 @@ REPL = [
     ("<title>BP2.3</title>", "<title>流浪计划</title>"),
     ('<div class="eyebrow">BP2.3</div>', '<div class="eyebrow">流浪计划</div>'),
     ("<h1>爆破2.3实时策略页</h1>", "<h1>流浪计划实时策略页</h1>"),
+    ('<a class="nav-link" href="/wandering-plan/">流浪计划</a>', '<a class="nav-link" href="/">BP2.3 首页</a>'),
     ('<body data-api="/api/bp2-3/data">', '<body data-api="/api/wandering-plan/data">'),
     ("<div>数据源：本机 BP2.3 回测与每日信号；每年独立按 10 万本金重算，最新候选单独列出。</div>",
      "<div>数据源：已逐笔核验的 610 笔回测（B1 313 / QL2 266 / V12 31）；2 仓 × 50% 复利。</div>"),
