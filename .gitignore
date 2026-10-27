@@ -1,0 +1,14 @@
+data/
+output/
+runtime/
+*.parquet
+*.csv
+*.xlsx
+*.sqlite3
+keys/
+secrets/
+.env
+__pycache__/
+*.pyc
+site/wandering-plan/index.html
+signal_*.json
