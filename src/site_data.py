@@ -107,7 +107,8 @@ def _next_days(cal, data_date, n: int = 5) -> list[pd.Timestamp]:
 
 
 def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
-          expected_last: str | None, stale: bool, history: dict | None = None) -> dict:
+          expected_last: str | None, stale: bool, history: dict | None = None,
+          stream_as_of: dict | None = None) -> dict:
     hist = _enrich_curves(history if history is not None else _load_history())
     data_date = pd.Timestamp(data_date)
     sig = [s for s in signals if s.get("symbol") and s.get("buy_date") is not None]
@@ -186,6 +187,15 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         warnings.append(f"数据截至 {data_date.date()}；每个交易日 17:45 自动更新。红色=本策略，灰色=沪深300。")
     if hist.get("_missing"):
         warnings.append("历史绩效快照缺失：overall/yearly/trades 为空，仅展示当日信号。")
+    # 分流数据管道日期（如实提示，避免误解为"信号丢失"）
+    if stream_as_of:
+        lagging = []
+        for src in ("B1", "QL2", "V12"):
+            dt = stream_as_of.get(src)
+            if dt and pd.Timestamp(dt) < data_date:
+                lagging.append(f"{src} 数据至 {pd.Timestamp(dt).date()}")
+        if lagging:
+            warnings.append("部分管道最后信号较旧：" + "、".join(lagging) + "（无新信号时不产生候选）")
 
     meta = {
         "model": "流浪计划",

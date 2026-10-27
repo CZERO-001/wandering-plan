@@ -125,7 +125,8 @@ def main(argv: list[str] | None = None) -> int:
     (out / "plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     # 站点同格式数据（与 bp2_3.json 对齐，供 app.js 渲染）
-    site_payload = site_data.build(plan, signals, cal, data_date, expected, stale)
+    stream_as_of = {"B1": st.get("b1"), "QL2": st.get("ql2"), "V12": st.get("v11")}
+    site_payload = site_data.build(plan, signals, cal, data_date, expected, stale, stream_as_of=stream_as_of)
     site_path = site_data.write(site_payload)
     _log(f"site data written: {site_path}")
 

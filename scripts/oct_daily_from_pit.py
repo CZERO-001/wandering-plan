@@ -24,6 +24,8 @@ def main() -> None:
     ap.add_argument("--lookback", type=int, default=90)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--out", default=str(OCT_DAILY))
+    ap.add_argument("--source", choices=["pit", "raw_sina"], default="pit")
+    ap.add_argument("--raw-dir", default=r"D:\AStockWorker\data\raw_sina")
     a = ap.parse_args()
     targets = [d.strip() for d in a.dates.split(",") if d.strip()]
 
@@ -31,8 +33,16 @@ def main() -> None:
     existing["date"] = existing["date"].astype(str)
     max_date = existing["date"].max()
 
-    cal = pd.read_parquet(CAL)["date"]
-    cal = pd.to_datetime(cal).sort_values().tolist()
+    cal = None
+    try:
+        import sys as _sys
+        _sys.path.insert(0, r"D:\AStockWorker\double_wave_selector_dev")
+        from selector.calendar import get_trade_calendar  # type: ignore
+        cal = [pd.Timestamp(d) for d in get_trade_calendar()]
+    except Exception:
+        cal = None
+    if not cal:
+        cal = pd.to_datetime(pd.read_parquet(CAL)["date"]).sort_values().tolist()
     tgt_idx = [i for i, d in enumerate(cal) if d.strftime("%Y%m%d") in targets]
     if not tgt_idx:
         print("target dates not in calendar:", targets)
@@ -40,17 +50,28 @@ def main() -> None:
     start = cal[max(0, min(tgt_idx) - a.lookback)].strftime("%Y-%m-%d")
     end = cal[max(tgt_idx)].strftime("%Y-%m-%d")
 
-    p = str(PIT).replace("\\", "/")
     con = duckdb.connect()
-    df = con.execute(
-        f"""SELECT CAST(date AS DATE) AS date, symbol,
-                   CAST(raw_open AS DOUBLE) o, CAST(raw_high AS DOUBLE) h,
-                   CAST(raw_low AS DOUBLE) l, CAST(raw_close AS DOUBLE) c
-            FROM read_parquet('{p}')
-            WHERE CAST(date AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
-              AND regexp_matches(symbol, '^[0-9]{{6}}$')
-            ORDER BY symbol, date"""
-    ).fetchdf()
+    if a.source == "pit":
+        p = str(PIT).replace("\\", "/")
+        df = con.execute(
+            f"""SELECT CAST(date AS DATE) AS date, symbol,
+                       CAST(raw_open AS DOUBLE) o, CAST(raw_high AS DOUBLE) h,
+                       CAST(raw_low AS DOUBLE) l, CAST(raw_close AS DOUBLE) c
+                FROM read_parquet('{p}')
+                WHERE CAST(date AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+                  AND regexp_matches(symbol, '^[0-9]{{6}}$')
+                ORDER BY symbol, date"""
+        ).fetchdf()
+    else:
+        raw = str(Path(a.raw_dir).as_posix()) + "/*.csv"
+        df = con.execute(
+            f"""SELECT CAST(date AS DATE) AS date, lpad(CAST(symbol AS VARCHAR), 6, '0') AS symbol,
+                       CAST(open AS DOUBLE) o, CAST(high AS DOUBLE) h,
+                       CAST(low AS DOUBLE) l, CAST(close AS DOUBLE) c
+                FROM read_csv('{raw}', union_by_name=true, ignore_errors=true)
+                WHERE CAST(date AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'
+            """
+        ).fetchdf()
     con.close()
     df["date"] = pd.to_datetime(df["date"])
     rows = []
