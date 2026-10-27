@@ -25,6 +25,7 @@ CURVE_STYLE = """<style>
 .year-btns{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 12px}
 .year-btn{border:1px solid #2b4165;background:#111b2d;color:#c9d6ef;border-radius:999px;padding:6px 14px;font-size:14px;cursor:pointer}
 .year-btn.active{background:#ff4d4f;border-color:#ff4d4f;color:#fff}
+.pos{color:#ff4d4f!important}.neg{color:#3ddc84!important}
 </style>
 """
 
