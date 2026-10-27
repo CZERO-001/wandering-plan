@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import b1_signal, bars, calendar_utils, combo, config, freshness, public_page, ql2_signal, v12_signal
+from . import b1_signal, bars, calendar_utils, combo, config, freshness, ql2_signal, site_data, site_page, v12_signal
 
 PY = str(config.PY)
 
@@ -40,22 +40,29 @@ def _notify(msg: str) -> None:
 
 
 def _deploy(html_path: Path) -> tuple[bool, str]:
-    """scp 页面到 ZPC 并校验。"""
+    """scp 页面 + 站点数据 JSON 到 ZPC 并校验。"""
     ssh = r"C:\Users\astock.LAPTOP-U66OF3K2\MinGit\usr\bin\ssh.exe"
     scp = r"C:\Program Files\OpenSSH\OpenSSH-Win64\scp.exe"
     key = str(config.SSH_KEY)
     kh = str(config.SSH_KNOWN_HOSTS)
     remote_dir = config.ZPC_SITE_DIR.replace("\\", "/")
     remote_file = remote_dir + "/index.html"
+    remote_data_dir = config.ZPC_DATA_DIR.replace("\\", "/")
+    remote_data_file = remote_data_dir + "/wandering_plan.json"
     try:
         subprocess.run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
-                        config.ZPC_HOST, f'powershell -NoProfile -Command New-Item -ItemType Directory -Force -Path "{config.ZPC_SITE_DIR}" | Out-Null'],
+                        config.ZPC_HOST, f'powershell -NoProfile -Command New-Item -ItemType Directory -Force -Path "{config.ZPC_SITE_DIR}" | Out-Null; New-Item -ItemType Directory -Force -Path "{config.ZPC_DATA_DIR}" | Out-Null'],
                        capture_output=True, timeout=60)
         p = subprocess.run([scp, "-q", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
                             str(html_path), f"{config.ZPC_HOST}:{remote_file}"],
                            capture_output=True, timeout=120, text=True)
         if p.returncode != 0:
             return False, f"scp rc={p.returncode} {p.stderr[:200]}"
+        j = subprocess.run([scp, "-q", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
+                            str(config.SITE_DATA_OUT), f"{config.ZPC_HOST}:{remote_data_file}"],
+                           capture_output=True, timeout=120, text=True)
+        if j.returncode != 0:
+            return False, f"scp json rc={j.returncode} {j.stderr[:200]}"
         q = subprocess.run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
                             config.ZPC_HOST,
                             'powershell -NoProfile -Command "(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8901/wandering-plan/ -TimeoutSec 10).StatusCode"'],
@@ -102,11 +109,18 @@ def main(argv: list[str] | None = None) -> int:
     stale = bool(expected and str(data_date)[:10] < expected)
     reason = f"数据只到 {data_date.date()}，最近交易日是 {expected}" if stale else ""
 
-    html = public_page.write_page(plan, stale=stale, stale_reason=reason)
     out = config.LOG_DIR
     out.mkdir(parents=True, exist_ok=True)
     (out / "plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    _log(f"page written: {config.SITE_OUT / 'index.html'} ({len(html)} bytes)")
+
+    # 站点同格式数据（与 bp2_3.json 对齐，供 app.js 渲染）
+    site_payload = site_data.build(plan, signals, cal, data_date, expected, stale)
+    site_path = site_data.write(site_payload)
+    _log(f"site data written: {site_path}")
+
+    # 与现有策略页同壳的页面（从 BP2.3 模板生成）
+    page_path, missing = site_page.build_page()
+    _log(f"page written: {page_path} missing={missing}")
 
     summary = "今日无买入信号" if plan["status"] == "no_signal" else \
         "买入：" + "、".join(f"{s['symbol']} {s.get('name','')}" for s in plan["buys"])
