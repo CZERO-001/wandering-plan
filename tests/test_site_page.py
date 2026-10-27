@@ -12,11 +12,14 @@ class TestSitePage(unittest.TestCase):
         for marker in ("流浪计划实时策略页", 'data-api="/api/wandering-plan/data"',
                        "assets/app.js", "latestCards", "pendingTable", "yearCards",
                        "curveBox", "yearCurveBox", "资金曲线", "年度曲线", "沪深300",
-                       "dashGrid", "今日操作", "明天买卖提醒", "未来几日计划操作",
-                       "BP2.3 首页", "双波策略 V1.1"):
+                       "dashDate", "dashHold", "今日作战", "今日操作", "明天", "未来几日"):
             self.assertIn(marker, html, marker)
         self.assertNotIn("爆破2.3实时策略页", html)
         self.assertNotIn("<title>BP2.3</title>", html)
+        # 只保留「我的实盘」入口，其余策略导航隐藏
+        self.assertIn('href="/live/"', html)
+        for gone in ('href="/bp2-0/"', 'href="/ql2/"', 'href="/double-wave/"', 'href="/bp2-3/"'):
+            self.assertNotIn(gone, html, gone)
 
 
 if __name__ == "__main__":

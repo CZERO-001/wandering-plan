@@ -133,6 +133,8 @@ def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp,
     plan = []
     seen = set()
     for a, d in actions:
+        if d <= today:
+            continue
         key = (a["date"], a["action"], a["symbol"])
         if key in seen:
             continue
