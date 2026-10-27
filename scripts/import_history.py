@@ -86,11 +86,17 @@ def main() -> None:
         if pd.isna(start_eq):
             start_eq = 100000.0
         end_eq = float(year_end.get(y, start_eq))
+        first_buy = pd.Timestamp(sub["buy_date"].min())
+        last_sell = pd.Timestamp(sub["sell_date"].max())
+        ystart = pd.Timestamp(f"{int(y)}-01-01")
+        n_days = len([d for d in cal if ystart <= pd.Timestamp(d) <= last_sell])
+        yr_ret = end_eq / start_eq - 1
+        ann = (1.0 + yr_ret) ** (252.0 / max(n_days, 1)) - 1
         yearly.append({
             "year": int(y),
-            "trading_days": None,
-            "year_return": round(end_eq / start_eq - 1, 6),
-            "annualized_return": round((end_eq / start_eq) - 1, 6),
+            "trading_days": int(n_days),
+            "year_return": round(yr_ret, 6),
+            "annualized_return": round(ann, 6),
             "max_drawdown": round(float(((equity[equity.year == y]["equity"].cummax() - equity[equity.year == y]["equity"]) / equity[equity.year == y]["equity"].cummax()).min()), 6) if (equity.year == y).sum() > 1 else 0.0,
             "first_buy": sub["buy_date"].min(),
             "last_sell": sub["sell_date"].max(),

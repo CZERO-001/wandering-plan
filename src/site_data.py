@@ -106,6 +106,59 @@ def _next_days(cal, data_date, n: int = 5) -> list[pd.Timestamp]:
     return days[:n]
 
 
+def _action_item(s: dict, kind: str) -> dict:
+    return {"symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
+            "date": (pd.Timestamp(s["buy_date"]) if kind == "买入" else pd.Timestamp(s["sell_date"])).strftime("%Y-%m-%d"),
+            "action": kind}
+
+
+def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp, data_date: pd.Timestamp) -> dict:
+    today = pd.Timestamp.today().normalize()
+    next_day = calendar_utils.next_trading_day(cal, today)
+    win = [d for d in cal if today <= d][:6]
+    win_set = set(win)
+
+    buys, sells = [], []
+    for s in sig:
+        if s.get("buy_date") is not None:
+            buys.append((pd.Timestamp(s["buy_date"]), s))
+        if s.get("sell_date") is not None:
+            sells.append((pd.Timestamp(s["sell_date"]), s))
+    actions = [(_action_item(s, "买入"), d) for d, s in buys] + [(_action_item(s, "卖出"), d) for d, s in sells]
+    actions = [(a, d) for a, d in actions if d in win_set or d == today]
+    actions.sort(key=lambda x: (x[0]["date"], 0 if x[0]["action"] == "买入" else 1))
+
+    today_actions = [a for a, d in actions if d == today]
+    tomorrow_actions = [a for a, d in actions if d == next_day]
+    plan = []
+    seen = set()
+    for a, d in actions:
+        key = (a["date"], a["action"], a["symbol"])
+        if key in seen:
+            continue
+        seen.add(key)
+        plan.append(a)
+    holdings = []
+    for s in sorted(sig, key=lambda x: pd.Timestamp(x["buy_date"]), reverse=True):
+        bd = pd.Timestamp(s["buy_date"])
+        sd = pd.Timestamp(s["sell_date"]) if s.get("sell_date") is not None else None
+        if bd <= today and (sd is None or sd >= today):
+            holdings.append({"symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
+                             "buy_date": bd.strftime("%Y-%m-%d"),
+                             "sell_date": sd.strftime("%Y-%m-%d") if sd is not None else None})
+        if len(holdings) >= 2:
+            break
+    todays = [{"symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
+               "signal_date": pd.Timestamp(s["signal_date"]).strftime("%Y-%m-%d"),
+               "buy_date": pd.Timestamp(s["buy_date"]).strftime("%Y-%m-%d"),
+               "sell_date": pd.Timestamp(s["sell_date"]).strftime("%Y-%m-%d") if s.get("sell_date") is not None else None}
+              for s in sig if pd.Timestamp(s["signal_date"]) == pd.Timestamp(eff_date)]
+    return {"today": today.strftime("%Y-%m-%d"), "data_date": data_date.strftime("%Y-%m-%d"),
+            "next_day": next_day.strftime("%Y-%m-%d") if next_day is not None else None,
+            "holdings": holdings, "today_actions": today_actions,
+            "tomorrow_actions": tomorrow_actions, "latest_signals": todays, "plan": plan[:12]}
+
+
 def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
           expected_last: str | None, stale: bool, history: dict | None = None,
           stream_as_of: dict | None = None) -> dict:
@@ -229,6 +282,7 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         "curve": hist.get("curve", []),
         "benchmark_curve": hist.get("benchmark_curve", []),
         "year_curves": hist.get("year_curves", {}),
+        "dashboard": _dashboard(sig, cal, eff_date, data_date),
     }
 
 

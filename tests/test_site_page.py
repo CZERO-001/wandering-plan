@@ -12,6 +12,7 @@ class TestSitePage(unittest.TestCase):
         for marker in ("流浪计划实时策略页", 'data-api="/api/wandering-plan/data"',
                        "assets/app.js", "latestCards", "pendingTable", "yearCards",
                        "curveBox", "yearCurveBox", "资金曲线", "年度曲线", "沪深300",
+                       "dashGrid", "今日操作", "明天买卖提醒", "未来几日计划操作",
                        "BP2.3 首页", "双波策略 V1.1"):
             self.assertIn(marker, html, marker)
         self.assertNotIn("爆破2.3实时策略页", html)
