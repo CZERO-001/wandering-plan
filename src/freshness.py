@@ -55,6 +55,22 @@ def status(cal: list[pd.Timestamp] | None = None) -> dict:
     return items
 
 
+def _missing_oct_dates(expected: str | None, ql2_date: str | None) -> list[str]:
+    """列出 oct_factors 目录里缺失的交易日（只返回 existings 之后、expected 之前的）。"""
+    if not expected:
+        return []
+    cal = calendar_utils.trade_calendar()
+    exp = pd.Timestamp(expected)
+    start = pd.Timestamp(ql2_date) if ql2_date else exp - pd.Timedelta(days=10)
+    dates = [d for d in cal if start < d <= exp]
+    out = []
+    for d in dates:
+        f = config.WORK_DIR / "oct_factors" / (d.strftime("%Y%m%d") + ".parquet")
+        if not f.exists():
+            out.append(d.strftime("%Y%m%d"))
+    return out
+
+
 def backfill(st: dict, allow: bool = True) -> dict:
     """按缺失项触发补数据。返回每步结果。"""
     result: dict[str, dict] = {}
@@ -69,17 +85,24 @@ def backfill(st: dict, allow: bool = True) -> dict:
         result["pit"] = {"rc": rc, "tail": tail}
 
     if "ql2" in stale:
-        # L2 数据缺口：下载 + 因子 + 日线因子 + 冠军选股（脚本 Phase 2 参数化后由日期驱动）
+        # L2 数据缺口：按缺失交易日下载 + 因子 + 日线因子 + 冠军选股
+        missing = _missing_oct_dates(st.get("expected"), st.get("ql2"))
         steps = []
-        for script, timeout in [("dl_oct.py", 3600), ("compute_oct.py", 3600),
-                                ("tdx_daily_factors.py", 1800), ("champion_daily.py", 1800)]:
+        for script, timeout, extra in [
+            ("dl_oct.py", 3600, ["--dates", ",".join(missing)]),
+            ("compute_oct.py", 3600, ["--dates", ",".join(missing)]),
+            ("tdx_daily_factors.py", 1800, ["--start", "20260601",
+                                             "--end", (st.get("expected") or "").replace("-", ""),
+                                             "--ref", missing[-1] if missing else ""]),
+            ("champion_daily.py", 1800, []),
+        ]:
             path = config.WORK_DIR / script
             if not path.exists():
                 steps.append({"script": script, "rc": -1, "tail": "missing"})
                 continue
-            rc, tail = _run([PY, str(path)], timeout, f"backfill_{script.replace('.py','')}")
+            rc, tail = _run([PY, str(path)] + extra, timeout, f"backfill_{script.replace('.py','')}")
             steps.append({"script": script, "rc": rc, "tail": tail})
-        result["ql2"] = {"steps": steps}
+        result["ql2"] = {"steps": steps, "missing": missing}
 
     if "v11" in stale:
         root = config.SELECTOR_ROOT
