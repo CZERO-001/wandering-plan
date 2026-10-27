@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 
 from . import calendar_utils, config, names
+
+BENCH_CSV = config.ROOT / "data" / "index" / "sh000300.csv"
 
 
 def _load_history() -> dict:
@@ -26,6 +29,78 @@ def _board(symbol: str) -> str:
     return "其他"
 
 
+def _bench_series() -> pd.Series:
+    try:
+        b = pd.read_csv(BENCH_CSV, encoding="utf-8-sig")
+        b["date"] = pd.to_datetime(b["date"])
+        return b.sort_values("date").drop_duplicates("date").set_index("date")["close"]
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+def _bench_at(bench: pd.Series, d) -> float | None:
+    if bench.empty:
+        return None
+    d = pd.Timestamp(d)
+    s = bench[bench.index <= d]
+    if len(s):
+        return float(s.iloc[-1])
+    s = bench[bench.index >= d]
+    return float(s.iloc[0]) if len(s) else None
+
+
+def _enrich_curves(hist: dict) -> dict:
+    """给 history 补 benchmark_curve / year_curves / yearly.benchmark_return。"""
+    bench = _bench_series()
+    curve = [dict(x) for x in hist.get("curve", []) if x.get("equity")]
+    if not curve or bench.empty:
+        hist["benchmark_curve"] = []
+        hist["year_curves"] = {}
+        return hist
+    b0 = _bench_at(bench, curve[0]["date"])
+    bcurve = []
+    for p in curve:
+        b = _bench_at(bench, p["date"])
+        if b is None or not b0:
+            continue
+        bcurve.append({"date": p["date"], "equity": round(100000.0 * b / b0, 2),
+                       "return_pct": round((b / b0 - 1) * 100, 2)})
+    hist["benchmark_curve"] = bcurve
+    hist["meta_benchmark_as_of"] = bench.index.max().strftime("%Y-%m-%d") if len(bench) else None
+    # yearly benchmark return
+    yearly = hist.get("yearly", [])
+    by_year = {}
+    for y in yearly:
+        yy = str(y["year"])
+        arr = [p for p in curve if str(p["date"]).startswith(yy)]
+        if len(arr) >= 1:
+            bs = _bench_at(bench, arr[0]["date"])
+            be = _bench_at(bench, arr[-1]["date"])
+            by_year[int(y["year"])] = {"start_equity": arr[0]["equity"],
+                                        "benchmark_return": (be / bs - 1) if bs and be else None}
+            y["benchmark_return"] = by_year[int(y["year"])]["benchmark_return"]
+            y["start_equity"] = arr[0]["equity"]
+    year_curves = {}
+    for yy in by_year:
+        arr = [p for p in curve if str(p["date"]).startswith(str(yy))]
+        if len(arr) < 2:
+            continue
+        base_eq = float(arr[0]["equity"])
+        b0y = _bench_at(bench, arr[0]["date"])
+        strategy = [{"date": p["date"], "equity": round(100000.0 * p["equity"] / base_eq, 2),
+                     "return_pct": round((p["equity"] / base_eq - 1) * 100, 2)} for p in arr]
+        bcurve_y = []
+        for p in arr:
+            b = _bench_at(bench, p["date"])
+            if b is None or not b0y:
+                continue
+            bcurve_y.append({"date": p["date"], "equity": round(100000.0 * b / b0y, 2),
+                             "return_pct": round((b / b0y - 1) * 100, 2)})
+        year_curves[str(yy)] = {"base_date": arr[0]["date"], "strategy": strategy, "benchmark": bcurve_y}
+    hist["year_curves"] = year_curves
+    return hist
+
+
 def _next_days(cal, data_date, n: int = 5) -> list[pd.Timestamp]:
     days = [d for d in cal if d > pd.Timestamp(data_date)]
     return days[:n]
@@ -33,7 +108,7 @@ def _next_days(cal, data_date, n: int = 5) -> list[pd.Timestamp]:
 
 def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
           expected_last: str | None, stale: bool, history: dict | None = None) -> dict:
-    hist = history if history is not None else _load_history()
+    hist = _enrich_curves(history if history is not None else _load_history())
     data_date = pd.Timestamp(data_date)
     sig = [s for s in signals if s.get("symbol") and s.get("buy_date") is not None]
     for s in sig:
@@ -118,6 +193,7 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         "price_as_of": data_date.strftime("%Y-%m-%d"),
         "table_generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "last_trading_day": expected_last,
+        "benchmark_as_of": hist.get("meta_benchmark_as_of"),
         "initial_cash": config.INITIAL_CAPITAL,
         "capital_mode": "two_slot_50pct",
         "capital_mode_label": "2 仓 × 50% 复利",
@@ -139,6 +215,8 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         "stocks": hist.get("stocks", []),
         "trades": hist.get("trades", []),
         "curve": hist.get("curve", []),
+        "benchmark_curve": hist.get("benchmark_curve", []),
+        "year_curves": hist.get("year_curves", {}),
     }
 
 
