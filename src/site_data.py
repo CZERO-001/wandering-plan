@@ -138,6 +138,7 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         "future_window": [],
         "stocks": hist.get("stocks", []),
         "trades": hist.get("trades", []),
+        "curve": hist.get("curve", []),
     }
 
 

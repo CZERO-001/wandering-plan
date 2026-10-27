@@ -113,6 +113,10 @@ def main() -> None:
         })
     stocks.sort(key=lambda x: x["net_profit"], reverse=True)
 
+    curve = [{"date": pd.Timestamp(d).strftime("%Y-%m-%d"), "equity": round(float(e), 2)}
+             for d, e in zip(equity["date"], equity["equity"])]
+    curve.insert(0, {"date": str(tr["buy_date"].min()), "equity": 100000.0})
+
     final_eq = float(equity["equity"].iloc[-1])
     start = pd.Timestamp(tr["buy_date"].min())
     end = pd.Timestamp(tr["sell_date"].max())
@@ -147,6 +151,7 @@ def main() -> None:
         "yearly": yearly,
         "stocks": stocks,
         "trades": trades,
+        "curve": curve,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")

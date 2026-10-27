@@ -30,6 +30,7 @@ class TestSiteData(unittest.TestCase):
         m = payload["meta"]
         for key in ("model", "generated_at", "signal_as_of", "stale", "warnings"):
             self.assertIn(key, m)
+        self.assertIn("curve", payload)
         self.assertEqual(payload["latest"]["signal_date"], "2026-10-23")
         chosen = [c for c in payload["latest"]["candidates"] if c["decision"] == "计划买入"]
         self.assertTrue(chosen)
