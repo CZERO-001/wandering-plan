@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""从 BP2.3 页面模板生成『流浪计划』页面（与现有策略页同壳），并加入红/灰双线资金曲线。"""
+"""从 BP2.3 页面模板生成『流浪计划』页面（同壳 + 顶部作战面板 + 红/灰双线曲线）。"""
 from __future__ import annotations
 
 import datetime
@@ -28,8 +28,82 @@ CURVE_STYLE = """<style>
 .pos{color:#ff4d4f!important}.neg{color:#3ddc84!important}
 .signal-features{display:none!important}
 .live-record{display:none!important}
+.dash{margin:2px 0 18px}
+.dash-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.dash-item{background:linear-gradient(180deg,rgba(18,24,32,.97),rgba(14,20,27,.97));border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+.dash-item.wide{grid-column:1/-1}
+.dash-k{color:var(--muted);font-size:13px;letter-spacing:.08em;margin-bottom:8px}
+.dash-v{font-size:21px;font-weight:800;line-height:1.55}
+.dash-v small{display:block;color:var(--muted);font-size:12px;font-weight:400;margin-top:2px}
+.act{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:700;margin-right:5px}
+.act.buy{background:rgba(255,77,79,.16);color:#ff4d4f;border:1px solid rgba(255,77,79,.5)}
+.act.sell{background:rgba(61,220,132,.14);color:#3ddc84;border:1px solid rgba(61,220,132,.45)}
+.plan-date{color:#8192b0;font-size:13px;margin-right:8px}
+.summary-strip{display:flex;flex-wrap:wrap;gap:16px;margin:2px 0 12px;color:#91a5ca;font-size:13px}
+.summary-strip b{margin-left:5px}
+@media(max-width:620px){.dash-grid{grid-template-columns:1fr}}
 </style>
 """
+
+DASH_SECTION = """  <section class="dash">
+    <div class="dash-grid" id="dashGrid"></div>
+  </section>
+
+"""
+
+DASH_SCRIPT = """<script>
+(function(){
+  "use strict";
+  var WP=null;
+  function esc(v){var s=String(v===null||v===undefined?"":v);return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+  function fmtPct(v){if(v===null||v===undefined||isNaN(Number(v)))return "-";var n=Number(v)*100;return (n>=0?"+":"")+n.toFixed(2)+"%"}
+  function fmtMoney(v){if(v===null||v===undefined||isNaN(Number(v)))return "-";var n=Number(v);return Math.abs(n)>=10000?(n/10000).toFixed(2)+"万":n.toFixed(0)}
+  function actBadge(a){return '<span class="act '+(a==="买入"?"buy":"sell")+'">'+esc(a)+"</span>"}
+  function block(k,v,wide){return '<div class="dash-item'+(wide?" wide":"")+'"><div class="dash-k">'+esc(k)+'</div><div class="dash-v">'+v+"</div></div>"}
+  function renderDash(d){
+    var g=document.getElementById("dashGrid");if(!g||!d||!d.dashboard)return;var x=d.dashboard;
+    var hold=(x.holdings&&x.holdings.length)?x.holdings.map(function(h){return esc(h.symbol)+" "+esc(h.name)+"<small>"+esc(h.source)+" · 计划 "+esc(h.sell_date||"-")+" 卖出</small>"}).join("<br>"):"空仓";
+    var today=(x.today_actions&&x.today_actions.length)?x.today_actions.map(function(a){return actBadge(a.action)+" "+esc(a.symbol)+" "+esc(a.name)}).join("<br>"):"无操作";
+    var tmr=(x.tomorrow_actions&&x.tomorrow_actions.length)?x.tomorrow_actions.map(function(a){return actBadge(a.action)+" "+esc(a.symbol)+" "+esc(a.name)}).join("<br>"):"无操作";
+    var sig=(x.latest_signals&&x.latest_signals.length)?x.latest_signals.map(function(s){return esc(s.symbol)+" "+esc(s.name)+"<small>"+esc(s.source)+" · 信号 "+esc(s.signal_date)+" · 买 "+esc(s.buy_date)+" / 卖 "+esc(s.sell_date||"-")+"</small>"}).join("<br>"):"最新信号日无候选";
+    var plan=(x.plan&&x.plan.length)?x.plan.map(function(p){return '<span class="plan-date">'+esc(p.date)+"</span>"+actBadge(p.action)+" "+esc(p.symbol)+" "+esc(p.name)}).join("<br>"):"未来几日无操作";
+    g.innerHTML=block("持仓",hold)+block("今日操作（"+x.today+"）",today)+block("明天买卖提醒（"+(x.next_day||"-")+"）",tmr)+block("今日信号（"+x.data_date+"）",sig)+block("未来几日计划操作",plan,true);
+  }
+  function scaleForYear(y){var arr=(WP&&WP.yearly)||[];for(var i=0;i<arr.length;i++){if(Number(arr[i].year)===Number(y)){var se=Number(arr[i].start_equity);return se?100000/se:1}}return 1}
+  function detailTable(rows){
+    var trs=rows.map(function(t){var sc=scaleForYear(t.year),pv=Number(t.net_profit)*sc;var cls=pv>=0?"pos":"neg";var Q=String.fromCharCode(34);return "<tr><td>"+esc(t.buy_date)+(t.buy_time?" "+esc(t.buy_time):"")+"</td><td>"+esc(t.sell_date)+(t.sell_time?" "+esc(t.sell_time):"")+"</td><td>"+esc(t.symbol)+"</td><td>"+esc(t.name)+"</td><td>"+esc(t.source||"")+"</td><td>"+Number(t.return_pct).toFixed(2)+"%</td><td class="+Q+cls+Q+">"+fmtMoney(pv)+"</td></tr>"}).join("");
+    return '<div class="table-wrap" style="overflow-x:auto"><table><thead><tr><th>买入</th><th>卖出</th><th>代码</th><th>名称</th><th>策略</th><th>收益</th><th>按当年10万折算盈亏</th></tr></thead><tbody>'+trs+"</tbody></table></div>"
+  }
+  function showYear(y){
+    if(!WP)return;var yr=(WP.yearly||[]).filter(function(x){return Number(x.year)===Number(y)})[0];
+    var rows=(WP.trades||[]).filter(function(t){return Number(t.year)===Number(y)});
+    var sec=document.getElementById("detailSection"),body=document.getElementById("detailBody");
+    if(!sec||!body)return;sec.hidden=false;
+    document.getElementById("detailEyebrow").textContent="年度详情（每年独立 10 万起算）";
+    document.getElementById("detailTitle").textContent=y+" 年";
+    var sum="";
+    if(yr){sum='<div class="summary-strip"><div>本策略<b class="'+(Number(yr.year_return)>=0?"pos":"neg")+'">'+fmtPct(yr.year_return)+'</b></div><div>沪深300<b class="'+(Number(yr.benchmark_return)>=0?"pos":"neg")+'">'+fmtPct(yr.benchmark_return)+'</b></div><div>最大回撤<b class="neg">'+fmtPct(yr.max_drawdown)+'</b></div><div>成交<b>'+yr.trades+" 笔</b></div><div>胜率<b>"+Number(yr.win_rate).toFixed(1)+"%</b></div></div>"}
+    body.innerHTML=sum+detailTable(rows);
+  }
+  function showStock(sym){
+    if(!WP)return;var rows=(WP.trades||[]).filter(function(t){return t.symbol===sym});if(!rows.length)return;
+    var sec=document.getElementById("detailSection"),body=document.getElementById("detailBody");
+    if(!sec||!body)return;sec.hidden=false;
+    document.getElementById("detailEyebrow").textContent="个股详情（按当年 10 万折算）";
+    document.getElementById("detailTitle").textContent=sym+" "+(rows[0].name||"");
+    body.innerHTML=detailTable(rows);
+  }
+  document.addEventListener("click",function(e){
+    var t=e.target;if(!t||!t.closest)return;
+    var yc=t.closest(".year-card");if(yc){setTimeout(function(){showYear(yc.getAttribute("data-year"))},25);return}
+    var tr=t.closest("tr.clickable");if(tr){setTimeout(function(){showStock(tr.getAttribute("data-symbol"))},25)}
+  },true);
+  fetch("/api/wandering-plan/data",{credentials:"same-origin",cache:"no-store"})
+    .then(function(r){return r.json()})
+    .then(function(d){WP=d;renderDash(d)})
+    .catch(function(){});
+})();
+</script>"""
 
 CURVE_SECTION = """  <section class="section">
     <div class="section-head"><div><div class="eyebrow">资金曲线</div><h2>三路组合复利曲线（10 万起）</h2></div></div>
@@ -145,10 +219,11 @@ REPL = [
      "<div>数据源：已逐笔核验的 610 笔回测（B1 313 / QL2 266 / V12 31）；2 仓 × 50% 复利；红色=本策略，灰色=沪深300。</div>"),
     ("<div>冠军参数 m3|1.0/1.0/0.8|low0.1|q40|zskip|k3|h1；已知代价：全期最大回撤 -44.70%（BP2.2 为 -44.55%）。</div>",
      "<div>三路信号：B1 爆破 / QL2 冠军 / 双波 O1+C3（V1.2 离场）；每日 17:45 自动更新。</div>"),
+    ("</header>", "</header>\n" + DASH_SECTION),
     ("</head>", CURVE_STYLE + "</head>"),
     ('<section class="section">\n    <div class="section-head"><div><div class="eyebrow">最新信号</div><h2>最近信号日候选</h2></div></div>',
      CURVE_SECTION + '  <section class="section">\n    <div class="section-head"><div><div class="eyebrow">最新信号</div><h2>最近信号日候选</h2></div></div>'),
-    ("</body>", CURVE_SCRIPT + "\n</body>"),
+    ("</body>", DASH_SCRIPT + CURVE_SCRIPT + "\n</body>"),
 ]
 
 
