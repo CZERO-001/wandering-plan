@@ -17,6 +17,8 @@ QL2_CHAMPION_GLOB = "champion_*.csv"
 V11_PICKS = SELECTOR_ROOT / "site" / "data" / "picks_v1_1.json"
 V11_HISTORY = SELECTOR_ROOT / "output" / "history" / "selected_signals_v1_1.parquet"
 SITE_OUT = CZERO_WEB / "site" / "wandering-plan"
+SITE_DATA_OUT = CZERO_WEB / "site" / "data" / "wandering_plan.json"
+HISTORY_JSON = ROOT / "data" / "wandering_plan" / "history.json"
 LOG_DIR = ROOT / "output" / "logs" / "wandering_plan"
 
 # ---- 组合规则 ----
@@ -46,4 +48,5 @@ ZPC_HOST = "CZERO@192.168.1.72"
 SSH_KEY = Path(r"D:\CodexData\CodexSupervisor\keys\zpc_codex_ed25519_20260923")
 SSH_KNOWN_HOSTS = Path(r"D:\CodexData\CodexSupervisor\keys\zpc_known_hosts")
 ZPC_SITE_DIR = r"C:\AStockWorker\czero_web\site\wandering-plan"
+ZPC_DATA_DIR = r"C:\AStockWorker\czero_web\site\data"
 ZPC_LOCAL_URL = "http://192.168.1.72:8901"

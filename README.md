@@ -37,6 +37,14 @@
 - 页面三状态：今天要买（大字显示股票/买入时间/卖出时间/仓位）、今天不用买、信号未更新
 - 无需登录，不展示持仓/账本/个人信息
 
+## 站点集成（2026-10-27）
+
+- 页面与其它策略同壳：复用 `site/assets/style.css` + `site/assets/app.js`，数据走 `/api/wandering-plan/data`
+- 页面模板来自 `site/bp2-3/index.html`（`scripts/build_page.py` 生成，只改标题/导航/文案）
+- 数据 JSON 与 `site/data/bp2_3.json` 同结构：`meta / overall / yearly / latest / pending / stocks / trades`
+- 全站顶栏已互链（BP2.3 / BP2.0 / QL2 / 双波 / 实盘 ↔ 流浪计划）
+- server.py 恢复 QL2 路由：`/ql2/`、`/api/ql2/data`；`/ql1/` 与 `/api/ql1/data` 302 到 QL2
+
 ## 每日自动化
 
 - 本机计划任务 `AStock_WanderingPlan_Daily`：工作日 17:45 运行 `czero_web/scripts/run_wandering_plan_daily.ps1`
