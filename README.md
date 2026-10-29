@@ -49,9 +49,13 @@ python -m src.daily_run：数据新鲜度检查 → 三路信号 → 组合排�
 
 ## 每日自动化
 
-- 本机计划任务 AStock_WanderingPlan_Daily：工作日 17:45 运行 czero_web/scripts/run_wandering_plan_daily.ps1
-- 流程：数据新鲜度检查 → 缺数据自动补 → 三路信号 → 组合排程 → 生成页面 → scp 到 ZPC → 微信通知
+- 本机计划任务：
+  - AStock_WanderingPlan_Morning：工作日 08:30，早更（数据补到上一完成交易日 + 重建页面）
+  - AStock_WanderingPlan_Noon：工作日 12:00，盘中持仓快照（现价/浮动盈亏/QL2 止损价）
+  - AStock_WanderingPlan_Daily：工作日 17:45，收盘日更（信号/持仓/明日提醒/个股/年度）
+- 流程：数据新鲜度检查 → 缺数据自动补（PIT/Tencent 日线、QL2、B1、V12）→ 信号 → 页面 → scp 到 ZPC → 微信通知
 - 任务已设置 StartWhenAvailable，唤醒后可补跑；数据补不齐时页面显示「信号未更新」并告警
+- 2026-10-29 修复：PIT 刷新结束日不再读旧的 data/raw/000001.csv，改为显式 -EndDate / raw_sina 最新日期；新增腾讯 kline 批量补日线（fetch_missing_daily_fast.py）；QL2 的日线因子在通达信客户端不可用时改用 PIT 数据补齐（scripts/build_qld_daily_from_pit.py）；新增 08:30 早更、12:00 盘中持仓快照。
 
 ## GitHub
 

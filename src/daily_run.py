@@ -139,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-deploy", action="store_true")
     ap.add_argument("--skip-backfill", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--notify", choices=["always", "on-failure", "never"], default="always")
     a = ap.parse_args(argv)
 
     _log(f"version {config.VERSION}")
@@ -166,19 +167,8 @@ def main(argv: list[str] | None = None) -> int:
 
     plan = combo.build_plan(signals, cal, data_date, capital=a.capital)
     expected = st.get("expected")
-    # 以「已发布的基准数据日」为最新可得日：与之持平即视为最新（数据管道滞后时不再误报）
-    try:
-        from .site_data import _bench_series
-        bench_last = _bench_series().index.max()
-    except Exception:
-        bench_last = None
-    if bench_last is not None:
-        stale = pd.Timestamp(data_date) < pd.Timestamp(bench_last)
-        reason = (f"数据只到 {data_date.date()}，最新可得 {pd.Timestamp(bench_last).date()}"
-                  if stale else "")
-    else:
-        stale = bool(expected and str(data_date)[:10] < expected)
-        reason = f"数据只到 {data_date.date()}，最近交易日是 {expected}" if stale else ""
+    stale = bool(expected and str(data_date)[:10] < str(expected))
+    reason = f"数据只到 {data_date.date()}，最近已收盘交易日是 {expected}" if stale else ""
 
     out = config.LOG_DIR
     out.mkdir(parents=True, exist_ok=True)
@@ -219,9 +209,11 @@ def main(argv: list[str] | None = None) -> int:
         ok, detail = _deploy(config.SITE_OUT / "index.html")
         _log(f"deploy: {ok} {detail}")
         _log(_check_public())
-    _notify(f"流浪计划 {pd.Timestamp(data_date).date()}\n{summary}\n页面：{config.ZPC_LOCAL_URL}/wandering-plan/")
+    if a.notify == "always":
+        _notify(f"流浪计划 {pd.Timestamp(data_date).date()}\n{summary}\n页面：{config.ZPC_LOCAL_URL}/wandering-plan/")
     if stale:
-        _notify(f"流浪计划警告：{reason}")
+        if a.notify != "never":
+            _notify(f"流浪计划警告：{reason}")
         return 1
     return 0 if ok else 1
 

@@ -32,9 +32,19 @@ def _run(cmd: list[str], timeout: int, log_name: str) -> tuple[int, str]:
         return 1, str(exc)
 
 
+def last_completed_trading_day(cal: list[pd.Timestamp], now=None) -> pd.Timestamp | None:
+    """最近一个已收盘的交易日：15:00 前算上一交易日，15:00 后算当日（非交易日回退）。"""
+    t = pd.Timestamp(now) if now is not None else pd.Timestamp.now()
+    today = t.normalize()
+    if t.hour * 60 + t.minute >= 15 * 60:
+        return calendar_utils.last_trading_day(cal, today)
+    prior = [x for x in cal if x < today]
+    return prior[-1] if prior else None
+
+
 def status(cal: list[pd.Timestamp] | None = None) -> dict:
     cal = cal or calendar_utils.trade_calendar()
-    expected = calendar_utils.last_trading_day(cal)
+    expected = last_completed_trading_day(cal)
     pit = bars.latest_dataset_date()
     ql2 = ql2_signal.latest_signal_date()
     v11 = v12_signal.latest_signal_date()
@@ -80,8 +90,11 @@ def backfill(st: dict, allow: bool = True) -> dict:
 
     if "pit" in stale:
         ps = r"D:\AStockWorker\scripts\run_daily_factor_pit_refresh.ps1"
-        rc, tail = _run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps],
-                        3600, "backfill_pit")
+        expected = str(st.get("expected") or "").replace("-", "")
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps]
+        if expected:
+            cmd += ["-EndDate", expected]
+        rc, tail = _run(cmd, 7200, "backfill_pit")
         result["pit"] = {"rc": rc, "tail": tail}
 
     if "ql2" in stale:
@@ -91,12 +104,11 @@ def backfill(st: dict, allow: bool = True) -> dict:
         for script, timeout, extra in [
             ("dl_oct.py", 3600, ["--dates", ",".join(missing)]),
             ("compute_oct.py", 3600, ["--dates", ",".join(missing)]),
-            ("tdx_daily_factors.py", 1800, ["--start", "20260601",
-                                             "--end", (st.get("expected") or "").replace("-", ""),
-                                             "--ref", missing[-1] if missing else ""]),
+            (str(config.ROOT / "scripts" / "build_qld_daily_from_pit.py"), 1800,
+             ["--dates", ",".join(missing) or (st.get("expected") or "").replace("-", "")]),
             ("champion_daily.py", 1800, []),
         ]:
-            path = config.WORK_DIR / script
+            path = Path(script) if Path(script).is_absolute() else config.WORK_DIR / script
             if not path.exists():
                 steps.append({"script": script, "rc": -1, "tail": "missing"})
                 continue

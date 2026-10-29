@@ -515,6 +515,9 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         _y["net_profit"] = round(sum(float(t.get("net_profit") or 0) for t in _sub), 2)
         if _sub:
             _y["win_rate"] = round(sum(1 for t in _sub if float(t.get("return_pct") or 0) > 0) / len(_sub) * 100, 2)
+            _y["first_buy"] = min(str(t.get("buy_date")) for t in _sub if t.get("buy_date"))
+            _y["last_sell"] = max((str(t.get("sell_date")) for t in _sub if t.get("sell_date")), default="")
+            _y["avg_trade_return"] = round(sum(float(t.get("return_pct") or 0) for t in _sub) / len(_sub), 3)
         _b0 = _bench_at(bench, _arr[0]["date"])
         _strat = [{"date": x["date"], "equity": round(100000.0 * x["equity"] / _start_eq, 2),
                    "return_pct": round((x["equity"] / _start_eq - 1) * 100, 2)} for x in _arr]
@@ -546,7 +549,7 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
     if stale:
         warnings.append(f"数据只到 {data_date.date()}（最近交易日 {expected_last}），以下为旧信号，请勿照做。")
     else:
-        warnings.append(f"数据截至 {data_date.date()}；每个交易日 17:45 自动更新。红色=本策略，灰色=沪深300。")
+        warnings.append(f"数据截至 {data_date.date()}；每个交易日 08:30 / 12:00 / 17:45 自动更新。红色=本策略，灰色=沪深300。")
     if hist.get("_missing"):
         warnings.append("历史绩效快照缺失：overall/yearly/trades 为空，仅展示当日信号。")
     warnings.append("v1.1：QL2 卖出日盘中跌破买入价 9% 时止损卖出（成交价取 min(当日开盘, 0.91×买入价)），否则 15:00 收盘卖；B1/V12 规则不变。")

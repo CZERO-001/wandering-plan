@@ -45,6 +45,11 @@ class TestSiteData(unittest.TestCase):
         self.assertIsInstance(chosen[0]["weight"], float)
         for p in payload["pending"]:
             self.assertIn(p["decision"], ("计划买入", "计划卖出"))
+        trades = payload["trades"]
+        for y in payload["yearly"]:
+            sub = [t for t in trades if int(t.get("year") or 0) == int(y["year"])]
+            if sub and any(t.get("sell_date") for t in sub):
+                self.assertEqual(y["last_sell"], max(str(t["sell_date"]) for t in sub if t.get("sell_date")))
 
     def test_stale_warning(self):
         payload = site_data.build(self.plan, self.signals, self.cal, self.data_date,

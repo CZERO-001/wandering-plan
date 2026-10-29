@@ -122,7 +122,7 @@ DASH_SCRIPT = """<script>
     function g(id){return document.getElementById(id)}
     function money(v){if(v===null||v===undefined||isNaN(Number(v)))return "";var n=Number(v);return (n>=0?"+":"")+Math.round(n).toLocaleString("zh-CN")}
     function timeBadge(a){return '<span class="d-time">'+esc(a.time)+" "+(a.action==="买入"?"买":"卖")+"</span>"}
-    function pnlHtml(pct){if(pct===null||pct===undefined||isNaN(Number(pct)))return "";var cls=Number(pct)>=0?"pos":"neg";return '<div class="d-pnl '+cls+'">'+(Number(pct)>=0?"+":"")+Number(pct).toFixed(2)+'%</div>'}
+    function pnlHtml(pct,amount){if(pct===null||pct===undefined||isNaN(Number(pct)))return "";var cls=Number(pct)>=0?"pos":"neg";var h='<div class="d-pnl '+cls+'">'+(Number(pct)>=0?"+":"")+Number(pct).toFixed(2)+'%';if(amount!==null&&amount!==undefined&&!isNaN(Number(amount)))h+='<span class="d-amount">'+(Number(amount)>=0?"+":"")+Math.round(Number(amount)).toLocaleString("zh-CN")+' 元</span>';return h+'</div>'}
     function item(a){
       var right=a.action==="卖出"?pnlHtml(a.pnl_pct,a.pnl_amount):(a.price?'<div class="d-pnl">'+Number(a.price).toFixed(2)+'</div>':"");
       var sub=timeBadge(a)+esc(a.source);
@@ -132,6 +132,7 @@ DASH_SCRIPT = """<script>
     }
     var hold=(x.holdings&&x.holdings.length)?x.holdings.map(function(h){
       var sub=(h.entry!==null&&h.entry!==undefined)?('成本 '+Number(h.entry).toFixed(2)+'<br>计划 '+esc(h.sell_date||"-")+' 15:00 卖'):('计划 '+esc(h.buy_date)+' 09:30 买<br>'+esc(h.sell_date||"-")+' 15:00 卖');
+      if(h.last)sub+='<br>现价 '+Number(h.last).toFixed(2);
       if(h.stop_px)sub+='<br>止损 '+Number(h.stop_px).toFixed(2);
       return '<div class="d-item"><div><span class="d-code">'+esc(h.symbol)+'</span> <span class="d-name">'+esc(h.name)+'</span><div class="d-sub">'+esc(h.source)+' · '+sub+'</div></div>'+pnlHtml(h.pnl_pct,h.pnl_amount)+'</div>'
     }).join(""):'<div class="d-sub">空仓</div>';
@@ -147,7 +148,7 @@ DASH_SCRIPT = """<script>
     if(g("dashToday"))g("dashToday").innerHTML=today;
     if(g("dashTmr"))g("dashTmr").innerHTML=tmr;
     if(g("dashTmrTitle"))g("dashTmrTitle").textContent="明日买卖提醒（"+(x.next_day||"-")+"）";
-    if(g("dashSig"))g("dashSig").innerHTML="今日信号（"+x.data_date+"）："+sig;
+    if(g("dashSig"))g("dashSig").innerHTML="今日信号（"+x.data_date+"）："+sig+(x.intraday_at?"　｜　盘中快照 "+esc(String(x.intraday_at).slice(11,16)):"");
     if(g("dashTodo"))g("dashTodo").innerHTML=todo;
   }
 
@@ -324,9 +325,9 @@ REPL = [
     ("<h1>爆破2.3实时策略页</h1>", "<h1>流浪计划实时策略页 V1.1</h1>"),
     ('<body data-api="/api/bp2-3/data">', '<body data-api="/api/wandering-plan/data">'),
     ("<div>数据源：本机 BP2.3 回测与每日信号；每年独立按 10 万本金重算，最新候选单独列出。</div>",
-     "<div>数据源：610 笔回测 + 4 笔实盘（B1 313 / QL2 270 / V12 31）；QL2 卖出日 -9% 止损；2 仓 × 50% 复利；红色=本策略，灰色=沪深300。</div>"),
+     "<div>数据源：610 笔回测 + 实盘（B1 / QL2 / V12）；QL2 卖出日 -9% 止损；2 仓 × 50% 复利；每日 08:30、12:00、17:45 自动更新；红色=本策略，灰色=沪深300。</div>"),
     ("<div>冠军参数 m3|1.0/1.0/0.8|low0.1|q40|zskip|k3|h1；已知代价：全期最大回撤 -44.70%（BP2.2 为 -44.55%）。</div>",
-     "<div>三路信号：B1 爆破 / QL2 冠军（卖出日 -9% 止损）/ 双波 O1+C3（V1.2 离场）；每日 17:45 自动更新。</div>"),
+     "<div>三路信号：B1 爆破 / QL2 冠军（卖出日 -9% 止损）/ 双波 O1+C3（V1.2 离场）；每个交易日 08:30、12:00、17:45 自动更新。</div>"),
     ("</header>", "</header>\n" + DASH_SECTION),
     ('<section class="metric-grid">', RULES_SECTION + '<section class="metric-grid">'),
     ("</head>", CURVE_STYLE + "</head>"),
