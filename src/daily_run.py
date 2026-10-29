@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import b1_signal, bars, calendar_utils, combo, config, freshness, ql2_signal, site_data, site_page, v12_signal
+from . import b1_signal, bars, calendar_utils, combo, config, freshness, prices, ql2_signal, site_data, site_page, v12_signal
 
 PY = str(config.PY)
 
@@ -84,6 +84,30 @@ def _deploy(html_path: Path) -> tuple[bool, str]:
         return False, str(exc)
 
 
+def _public_url() -> str | None:
+    p = config.CZERO_WEB / "runtime" / "current_url.txt"
+    try:
+        if p.exists():
+            u = p.read_text(encoding="utf-8").strip()
+            return u if u.startswith("http") else None
+    except Exception:
+        return None
+    return None
+
+
+def _check_public() -> str:
+    u = _public_url()
+    if not u:
+        return "public: no current_url.txt"
+    try:
+        import urllib.request
+        req = urllib.request.Request(u.rstrip("/") + "/wandering-plan/", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return f"public: {r.status} {u}"
+    except Exception as exc:
+        return f"public: FAIL {u} {exc}"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="流浪计划日更")
     ap.add_argument("--as-of", default=None, help="信号日（默认自动取最新）")
@@ -93,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
 
+    _log(f"version {config.VERSION}")
     cal = calendar_utils.trade_calendar()
     st = freshness.status(cal)
     _log(f"freshness: {json.dumps(st, ensure_ascii=False)}")
@@ -147,6 +172,18 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = "今日无买入信号" if plan["status"] == "no_signal" else \
         "买入：" + "、".join(f"{s['symbol']} {s.get('name','')}" for s in plan["buys"])
+    stop_notes = []
+    for s in plan.get("sells", []):
+        if s.get("source") != "QL2":
+            continue
+        try:
+            entry = prices.open_on(s["symbol"], pd.Timestamp(s["buy_date"]))
+        except Exception:
+            entry = None
+        if entry:
+            stop_notes.append(f"{s['symbol']} 跌破 {entry * (1.0 - config.QL2_STOP):.2f} 止损，否则收盘卖")
+    if stop_notes:
+        summary += "；QL2止损：" + "、".join(stop_notes)
     _log(summary)
 
     if a.dry_run:
@@ -157,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     if not a.no_deploy:
         ok, detail = _deploy(config.SITE_OUT / "index.html")
         _log(f"deploy: {ok} {detail}")
+        _log(_check_public())
     _notify(f"流浪计划 {pd.Timestamp(data_date).date()}\n{summary}\n页面：{config.ZPC_LOCAL_URL}/wandering-plan/")
     if stale:
         _notify(f"流浪计划警告：{reason}")

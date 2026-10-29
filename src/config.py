@@ -21,6 +21,9 @@ SITE_DATA_OUT = CZERO_WEB / "site" / "data" / "wandering_plan.json"
 HISTORY_JSON = ROOT / "data" / "wandering_plan" / "history.json"
 LOG_DIR = ROOT / "output" / "logs" / "wandering_plan"
 
+# ---- 版本 ----
+VERSION = "1.1.0"
+
 # ---- 组合规则 ----
 INITIAL_CAPITAL = 100_000.0
 SLOTS = 2
@@ -32,6 +35,7 @@ MAX_PER_STREAM = {"B1": 2, "QL2": 1, "V12": 2}
 COST = 0.0021
 SLIPPAGE = 0.0005
 LIMIT_TOL = 0.011
+QL2_STOP = 0.09                                # QL2 卖出日盘中 -9% 止损（v1.1）
 BUY_DELAY = {"B1": 3, "QL2": 2, "V12": 4}      # T+k 开盘买
 SELL_DELAY = {"B1": 1, "QL2": 1}                # 买入后第 k 个交易日收盘卖
 V12_HOLD = 22                                    # 买入后第 22 个交易日收盘卖

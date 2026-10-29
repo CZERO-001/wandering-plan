@@ -8,7 +8,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from . import calendar_utils, config, names
+from . import calendar_utils, config, names, prices, ql2_exit
 
 BENCH_CSV = config.ROOT / "data" / "index" / "sh000300.csv"
 
@@ -194,22 +194,33 @@ def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp,
         d = pd.Timestamp(a["buy_date"]) if kind == "买入" else (pd.Timestamp(a["sell_date"]) if a.get("sell_date") is not None else None)
         if d is None:
             return None
+        tr = _trade_of(a["symbol"], a["buy_date"])
         it = {"symbol": a["symbol"], "name": a.get("name", ""), "source": a["source"],
               "date": d.strftime("%Y-%m-%d"), "action": kind,
               "time": "09:30" if kind == "买入" else "15:00"}
         if kind == "买入":
-            it["price"] = prices.open_on(a["symbol"], d)
+            it["price"] = float(tr["buy_price"]) if tr and tr.get("buy_price") else prices.open_on(a["symbol"], d)
         else:
-            entry = prices.open_on(a["symbol"], pd.Timestamp(a["buy_date"]))
-            exitp = prices.close_on(a["symbol"], d)
+            entry = float(tr["buy_price"]) if tr and tr.get("buy_price") else prices.open_on(a["symbol"], pd.Timestamp(a["buy_date"]))
+            exitp = None
+            if tr is not None and tr.get("sell_price") is not None:
+                exitp = float(tr["sell_price"])
+                it["time"] = tr.get("sell_time") or "15:00"
+                if tr.get("exit_reason"):
+                    it["exit_reason"] = tr.get("exit_reason")
             if exitp is None:
-                exitp = prices.close_on_or_before(a["symbol"], data_date)[1]
+                exitp = prices.close_on(a["symbol"], d)
+                if exitp is None:
+                    exitp = prices.close_on_or_before(a["symbol"], data_date)[1]
+                it["time"] = "15:00"
             it["entry"] = entry
             it["price"] = exitp
-            if show_pnl:
-                tr = _trade_of(a["symbol"], a["buy_date"])
-                if tr is not None:
-                    it["pnl_pct"], it["pnl_amount"] = tr.get("return_pct"), tr.get("net_profit")
+            if a["source"] == "QL2" and entry:
+                stop_px = round(float(entry) * (1.0 - config.QL2_STOP), 2)
+                it["stop_px"] = stop_px
+                it["note"] = f"盘中跌破 {stop_px:.2f} 止损，否则 15:00 收盘卖"
+            if show_pnl and tr is not None:
+                it["pnl_pct"], it["pnl_amount"] = tr.get("return_pct"), tr.get("net_profit")
         return it
 
     order = {"买入": 0, "卖出": 1}
@@ -241,10 +252,17 @@ def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp,
             pct = tr.get("return_pct") if tr else None
             if pct is None and entry and last:
                 pct = round((last / entry - 1) * 100, 2)
+            stop_px = None
+            if a["source"] == "QL2":
+                tr = _trade_of(a["symbol"], bd)
+                ent = tr.get("buy_price") if tr and tr.get("buy_price") else entry
+                if ent:
+                    stop_px = round(float(ent) * (1.0 - config.QL2_STOP), 2)
             holdings.append({"symbol": a["symbol"], "name": a.get("name", ""), "source": a["source"],
                              "buy_date": bd.strftime("%Y-%m-%d"),
                              "sell_date": sd.strftime("%Y-%m-%d") if sd is not None else None,
-                             "entry": entry, "last": last, "pnl_pct": pct, "pnl_amount": None})
+                             "entry": entry, "last": last, "pnl_pct": pct, "pnl_amount": None,
+                             "stop_px": stop_px})
         if len(holdings) >= 2:
             break
 
@@ -336,6 +354,11 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
             if k in seen:
                 continue
             seen.add(k)
+            stop_px = None
+            if s["source"] == "QL2" and kind == "sell":
+                ent = prices.open_on(s["symbol"], bd)
+                if ent:
+                    stop_px = round(float(ent) * (1.0 - config.QL2_STOP), 2)
             pending.append({
                 "symbol": s["symbol"],
                 "name": s.get("name", ""),
@@ -348,6 +371,7 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
                 "decision": "计划买入" if kind == "buy" else "计划卖出",
                 "source": s["source"],
                 "action_date": d.strftime("%Y-%m-%d"),
+                "stop_px": stop_px,
             })
     pending.sort(key=lambda x: (x["action_date"], 0 if x["decision"] == "计划买入" else 1))
 
@@ -363,12 +387,26 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
             continue
         sd = a.get("sell_date")
         closed = sd is not None and sd <= data_date
+        reason = "TIME"
+        sell_time = "15:00"
         if closed:
-            exitp = _prices.close_on(a["symbol"], sd)
+            if a["source"] == "QL2":
+                bar = _prices.bar_on(a["symbol"], sd)
+                if bar is not None:
+                    exitp, reason = ql2_exit.stop_loss_exit(
+                        entry, bar.get("open"), bar.get("low"), bar.get("prev_close"),
+                        ql2_exit.limit_rate_of(a["symbol"]), bar.get("close"))
+                    if reason == "STOP":
+                        sell_time = "09:30" if abs(float(exitp) - float(bar["open"])) <= 1e-9 else "盘中"
+                else:
+                    exitp = _prices.close_on(a["symbol"], sd)
+            else:
+                exitp = _prices.close_on(a["symbol"], sd)
             status = "已平仓"
         else:
             exitp = _prices.close_on_or_before(a["symbol"], data_date)[1]
             status = "持仓中"
+            reason = "持仓中"
         if exitp is None:
             continue
         ret = exitp / entry - 1.0 - config.COST
@@ -384,9 +422,9 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
             "net_profit": 0.0,
             "position_amount": 0.0, "position_pct": 50.0,
             "balance_after": 0.0,
-            "exit_reason": "TIME" if closed else "持仓中",
+            "exit_reason": reason,
             "hit_count": 1, "weight": 50.0,
-            "buy_time": "09:30", "sell_time": "15:00",
+            "buy_time": "09:30", "sell_time": sell_time,
             "status": status,
         })
     trades = hist_trades + live_rows
@@ -511,6 +549,7 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         warnings.append(f"数据截至 {data_date.date()}；每个交易日 17:45 自动更新。红色=本策略，灰色=沪深300。")
     if hist.get("_missing"):
         warnings.append("历史绩效快照缺失：overall/yearly/trades 为空，仅展示当日信号。")
+    warnings.append("v1.1：QL2 卖出日盘中跌破买入价 9% 时止损卖出（成交价取 min(当日开盘, 0.91×买入价)），否则 15:00 收盘卖；B1/V12 规则不变。")
     # 分流数据管道日期（如实提示，避免误解为"信号丢失"）
     if stream_as_of:
         lagging = []
@@ -523,7 +562,7 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
 
     meta = {
         "model": "流浪计划",
-        "version": config.__dict__.get("__version__", "1.0.0") if False else "1.0.0",
+        "version": config.VERSION,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "signal_as_of": eff_date.strftime("%Y-%m-%d"),
         "price_as_of": data_date.strftime("%Y-%m-%d"),

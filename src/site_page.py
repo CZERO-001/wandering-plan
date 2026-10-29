@@ -125,10 +125,14 @@ DASH_SCRIPT = """<script>
     function pnlHtml(pct){if(pct===null||pct===undefined||isNaN(Number(pct)))return "";var cls=Number(pct)>=0?"pos":"neg";return '<div class="d-pnl '+cls+'">'+(Number(pct)>=0?"+":"")+Number(pct).toFixed(2)+'%</div>'}
     function item(a){
       var right=a.action==="卖出"?pnlHtml(a.pnl_pct,a.pnl_amount):(a.price?'<div class="d-pnl">'+Number(a.price).toFixed(2)+'</div>':"");
-      return '<div class="d-item"><div><span class="d-code">'+esc(a.symbol)+'</span> <span class="d-name">'+esc(a.name)+'</span><div class="d-sub">'+timeBadge(a)+esc(a.source)+'</div></div>'+right+'</div>'
+      var sub=timeBadge(a)+esc(a.source);
+      if(a.action==="卖出"&&a.exit_reason==="STOP")sub+=' · 止损';
+      if(a.note)sub+='<br>'+esc(a.note);
+      return '<div class="d-item"><div><span class="d-code">'+esc(a.symbol)+'</span> <span class="d-name">'+esc(a.name)+'</span><div class="d-sub">'+sub+'</div></div>'+right+'</div>'
     }
     var hold=(x.holdings&&x.holdings.length)?x.holdings.map(function(h){
       var sub=(h.entry!==null&&h.entry!==undefined)?('成本 '+Number(h.entry).toFixed(2)+'<br>计划 '+esc(h.sell_date||"-")+' 15:00 卖'):('计划 '+esc(h.buy_date)+' 09:30 买<br>'+esc(h.sell_date||"-")+' 15:00 卖');
+      if(h.stop_px)sub+='<br>止损 '+Number(h.stop_px).toFixed(2);
       return '<div class="d-item"><div><span class="d-code">'+esc(h.symbol)+'</span> <span class="d-name">'+esc(h.name)+'</span><div class="d-sub">'+esc(h.source)+' · '+sub+'</div></div>'+pnlHtml(h.pnl_pct,h.pnl_amount)+'</div>'
     }).join(""):'<div class="d-sub">空仓</div>';
     var today=(x.today_actions&&x.today_actions.length)?x.today_actions.map(item).join(""):'<div class="d-sub">无操作</div>';
@@ -156,7 +160,7 @@ DASH_SCRIPT = """<script>
       var Q=String.fromCharCode(34);
       var gainHtml=(gain===null)?'<td>-</td>':'<td class='+Q+(gain>=0?"pos":"neg")+Q+'>'+(gain>=0?"+":"")+(gain*100).toFixed(2)+'%</td>';
       var balHtml=(bal===null)?'<td>-</td>':'<td>'+fmtMoney(bal)+'</td>';
-      return "<tr><td>"+esc(t.buy_date)+(t.buy_time?" "+esc(t.buy_time):"")+"</td><td>"+(t.sell_date?esc(t.sell_date)+(t.sell_time?" "+esc(t.sell_time):""):"持仓中")+"</td><td>"+esc(t.symbol)+"</td><td>"+esc(t.name)+"</td><td>"+esc(t.source||"")+"</td><td>"+Number(t.return_pct).toFixed(2)+"%</td><td class="+Q+cls+Q+">"+fmtMoney(pv)+"</td>"+gainHtml+balHtml+"</tr>"
+      return "<tr><td>"+esc(t.buy_date)+(t.buy_time?" "+esc(t.buy_time):"")+"</td><td>"+(t.sell_date?esc(t.sell_date)+(t.sell_time?" "+esc(t.sell_time):"")+(t.exit_reason==="STOP"?" 止损":""):"持仓中")+"</td><td>"+esc(t.symbol)+"</td><td>"+esc(t.name)+"</td><td>"+esc(t.source||"")+"</td><td>"+Number(t.return_pct).toFixed(2)+"%</td><td class="+Q+cls+Q+">"+fmtMoney(pv)+"</td>"+gainHtml+balHtml+"</tr>"
     }).join("");
     return '<div class="table-wrap" style="overflow-x:auto"><table><thead><tr><th>买入</th><th>卖出</th><th>代码</th><th>名称</th><th>策略</th><th>单笔涨跌</th><th>按当年10万折算盈亏</th><th>当年收益</th><th>折算余额</th></tr></thead><tbody>'+trs+"</tbody></table></div>"
   }
@@ -304,9 +308,9 @@ CURVE_SCRIPT = """<script>
 
 RULES_SECTION = """  <section class="section rules">
     <div class="card rules-card">
-      <div class="rules-title">买卖规则（三路合并 · 2 仓 × 50%）</div>
+      <div class="rules-title">买卖规则（三路合并 · 2 仓 × 50% · V1.1）</div>
       <div class="rules-line"><b class="r-b1">B1 爆破</b>：T 日 6 个因子同时满足（ret_1 ≤ -4.77%、range_60 ≥ 62.8%、range_compression ≥ 0.714、price_vs_ma60 ≥ +1.21%、w_amp_first10 ≥ 13.2%、w_std_ret ≥ 8.75%）→ <em>T+3 开盘买，次日收盘卖</em>。</div>
-      <div class="rules-line"><b class="r-ql2">QL2 冠军</b>：L2 五因子（t_count / O3 / C2 / C4 / N05）同时达标，按 candidate_score 只取第 1 名 → <em>T+2 开盘买，次日收盘卖</em>。</div>
+      <div class="rules-line"><b class="r-ql2">QL2 冠军</b>：L2 五因子（t_count / O3 / C2 / C4 / N05）同时达标，按 candidate_score 只取第 1 名 → <em>T+2 开盘买</em>；<em>卖出日盘中最低价 ≤ 买入价 × 0.91 时止损卖出（成交价取 min(开盘, 0.91×买入价)），否则 15:00 收盘卖</em>。</div>
       <div class="rules-line"><b class="r-v12">V12 双波</b>：O1 + C3 同时命中 → <em>T+4 开盘买，持有 22 个交易日</em>；或 V1.2 提前离场（前一日涨停 + 当日不涨停 + 浮盈 ≥ 20% 收盘卖，跌停顺延）。</div>
       <div class="rules-line muted">优先级 B1 &gt; QL2 &gt; V12；单路上限 B1 2 个 / QL2 1 个 / V12 2 个；总共 2 个仓位，每仓 5 万、复利。</div>
     </div>
@@ -315,14 +319,14 @@ RULES_SECTION = """  <section class="section rules">
 """
 
 REPL = [
-    ("<title>BP2.3</title>", "<title>流浪计划</title>"),
-    ('<div class="eyebrow">BP2.3</div>', '<div class="eyebrow">流浪计划</div>'),
-    ("<h1>爆破2.3实时策略页</h1>", "<h1>流浪计划实时策略页</h1>"),
+    ("<title>BP2.3</title>", "<title>流浪计划 V1.1</title>"),
+    ('<div class="eyebrow">BP2.3</div>', '<div class="eyebrow">流浪计划 · V1.1</div>'),
+    ("<h1>爆破2.3实时策略页</h1>", "<h1>流浪计划实时策略页 V1.1</h1>"),
     ('<body data-api="/api/bp2-3/data">', '<body data-api="/api/wandering-plan/data">'),
     ("<div>数据源：本机 BP2.3 回测与每日信号；每年独立按 10 万本金重算，最新候选单独列出。</div>",
-     "<div>数据源：已逐笔核验的 610 笔回测（B1 313 / QL2 266 / V12 31）；2 仓 × 50% 复利；红色=本策略，灰色=沪深300。</div>"),
+     "<div>数据源：610 笔回测 + 4 笔实盘（B1 313 / QL2 270 / V12 31）；QL2 卖出日 -9% 止损；2 仓 × 50% 复利；红色=本策略，灰色=沪深300。</div>"),
     ("<div>冠军参数 m3|1.0/1.0/0.8|low0.1|q40|zskip|k3|h1；已知代价：全期最大回撤 -44.70%（BP2.2 为 -44.55%）。</div>",
-     "<div>三路信号：B1 爆破 / QL2 冠军 / 双波 O1+C3（V1.2 离场）；每日 17:45 自动更新。</div>"),
+     "<div>三路信号：B1 爆破 / QL2 冠军（卖出日 -9% 止损）/ 双波 O1+C3（V1.2 离场）；每日 17:45 自动更新。</div>"),
     ("</header>", "</header>\n" + DASH_SECTION),
     ('<section class="metric-grid">', RULES_SECTION + '<section class="metric-grid">'),
     ("</head>", CURVE_STYLE + "</head>"),

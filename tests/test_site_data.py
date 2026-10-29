@@ -28,8 +28,10 @@ class TestSiteData(unittest.TestCase):
         for key in ("meta", "overall", "yearly", "latest", "pending", "stocks", "trades"):
             self.assertIn(key, payload)
         m = payload["meta"]
-        for key in ("model", "generated_at", "signal_as_of", "stale", "warnings"):
+        for key in ("model", "version", "generated_at", "signal_as_of", "stale", "warnings"):
             self.assertIn(key, m)
+        self.assertEqual(m["version"], "1.1.0")
+        self.assertTrue(any("v1.1" in w for w in m["warnings"]))
         self.assertIn("curve", payload)
         self.assertIn("benchmark_curve", payload)
         self.assertIn("year_curves", payload)

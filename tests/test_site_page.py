@@ -13,7 +13,8 @@ class TestSitePage(unittest.TestCase):
                        "assets/app.js", "latestCards", "pendingTable", "yearCards",
                        "curveBox", "yearCurveBox", "资金曲线", "年度曲线", "沪深300",
                        "dashHold", "dashToday", "dashTmr", "dashTodo", "今日持仓",
-                       "今日操作", "明日买卖提醒", "交易日待办", "dash-title"):
+                       "今日操作", "明日买卖提醒", "交易日待办", "dash-title",
+                       "V1.1", "止损", "0.91"):
             self.assertIn(marker, html, marker)
         self.assertNotIn("爆破2.3实时策略页", html)
         self.assertNotIn("<title>BP2.3</title>", html)
