@@ -118,7 +118,8 @@ def backfill(st: dict, allow: bool = True) -> dict:
 
     if "v11" in stale:
         root = config.SELECTOR_ROOT
-        rc, tail = _run([PY, str(root / "scripts" / "run_daily_select.py")], 1800, "backfill_v11")
+        rc, tail = _run([PY, str(root / "scripts" / "run_daily_select.py"), "--model", "v1_1"],
+                        1800, "backfill_v11")
         result["v11"] = {"rc": rc, "tail": tail}
 
     if "b1" in stale:

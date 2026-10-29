@@ -13,6 +13,30 @@ from . import calendar_utils, config, names, prices, ql2_exit
 BENCH_CSV = config.ROOT / "data" / "index" / "sh000300.csv"
 
 
+def _stream_data_as_of() -> dict[str, str]:
+    """各信号管道实际产出数据日（不是最近信号日）。"""
+    out: dict[str, str] = {}
+    try:
+        b = json.loads(config.B1_JSON.read_text(encoding="utf-8"))
+        if b.get("as_of"):
+            out["B1"] = str(b["as_of"])
+    except Exception:
+        pass
+    try:
+        files = sorted(config.WORK_DIR.glob("champion_*.csv"))
+        if files:
+            out["QL2"] = pd.Timestamp(files[-1].stem.split("_")[-1]).strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    try:
+        v = json.loads(config.V11_PICKS.read_text(encoding="utf-8"))
+        if v.get("as_of"):
+            out["V12"] = str(v["as_of"])
+    except Exception:
+        pass
+    return out
+
+
 def _load_history() -> dict:
     p = config.HISTORY_JSON
     if not p.exists():
@@ -569,15 +593,22 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
     if hist.get("_missing"):
         warnings.append("历史绩效快照缺失：overall/yearly/trades 为空，仅展示当日信号。")
     warnings.append("v1.1：QL2 卖出日盘中跌破买入价 9% 时止损卖出（成交价取 min(当日开盘, 0.91×买入价)），否则 15:00 收盘卖；B1/V12 规则不变。")
-    # 分流数据管道日期（如实提示，避免误解为"信号丢失"）
+    # 分流数据日期与最近信号日分开提示，避免把「无新信号」误解为「数据没更新」
+    stream_data = _stream_data_as_of()
     if stream_as_of:
-        lagging = []
+        notes = []
         for src in ("B1", "QL2", "V12"):
-            dt = stream_as_of.get(src)
-            if dt and pd.Timestamp(dt) < data_date:
-                lagging.append(f"{src} 数据至 {pd.Timestamp(dt).date()}")
-        if lagging:
-            warnings.append("部分管道最后信号较旧：" + "、".join(lagging) + "（无新信号时不产生候选）")
+            sig_dt = stream_as_of.get(src)
+            data_dt = stream_data.get(src)
+            if not sig_dt:
+                continue
+            sig_ts, data_ts = pd.Timestamp(sig_dt), pd.Timestamp(data_dt) if data_dt else None
+            if data_ts is not None and data_ts >= pd.Timestamp(data_date) and sig_ts < pd.Timestamp(data_date):
+                notes.append(f"{src} 数据已到 {data_ts.date()}，最近信号日 {sig_ts.date()}（当天无新信号）")
+            elif sig_ts < pd.Timestamp(data_date):
+                notes.append(f"{src} 最近信号日 {sig_ts.date()}，数据至 {(data_ts or sig_ts).date()}")
+        if notes:
+            warnings.append("；".join(notes))
 
     meta = {
         "model": "流浪计划",
@@ -592,6 +623,8 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         "capital_mode": "two_slot_50pct",
         "capital_mode_label": "2 仓 × 50% 复利",
         "warnings": warnings,
+        "stream_data_as_of": stream_data,
+        "stream_signal_as_of": {k: str(v)[:10] for k, v in (stream_as_of or {}).items() if v},
         "stale": bool(stale),
         "signals": {
             "B1": sum(1 for s in sig if s["source"] == "B1"),
