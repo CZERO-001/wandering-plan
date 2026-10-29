@@ -6,6 +6,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -49,23 +50,44 @@ def _deploy(html_path: Path) -> tuple[bool, str]:
     remote_file = remote_dir + "/index.html"
     remote_data_dir = config.ZPC_DATA_DIR.replace("\\", "/")
     remote_data_file = remote_data_dir + "/wandering_plan.json"
+    def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
+        last = None
+        for i in range(3):
+            try:
+                last = subprocess.run(cmd, capture_output=True, timeout=timeout, text=True,
+                                       encoding="utf-8", errors="replace")
+                if last.returncode == 0:
+                    return last
+            except Exception as exc:  # noqa: BLE001
+                last = None
+                err = str(exc)
+            time.sleep(2 + i * 2)
+        if last is None:
+            raise RuntimeError("command failed after retries")
+        return last
+
     try:
-        subprocess.run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
-                        config.ZPC_HOST, f'powershell -NoProfile -Command New-Item -ItemType Directory -Force -Path "{config.ZPC_SITE_DIR}" | Out-Null; New-Item -ItemType Directory -Force -Path "{config.ZPC_DATA_DIR}" | Out-Null'],
-                       capture_output=True, timeout=60)
+        _run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
+              config.ZPC_HOST, f'powershell -NoProfile -Command New-Item -ItemType Directory -Force -Path "{config.ZPC_SITE_DIR}" | Out-Null; New-Item -ItemType Directory -Force -Path "{config.ZPC_DATA_DIR}" | Out-Null'],
+             timeout=60)
+
         def _scp_atomic(local: str, remote_final: str) -> tuple[bool, str]:
             tmp = remote_final + ".tmp"
-            p = subprocess.run([scp, "-q", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
-                                local, f"{config.ZPC_HOST}:{tmp}"],
-                               capture_output=True, timeout=120, text=True)
+            try:
+                p = _run([scp, "-q", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
+                          local, f"{config.ZPC_HOST}:{tmp}"], timeout=120)
+            except Exception as exc:
+                return False, f"scp exception {exc}"
             if p.returncode != 0:
-                return False, f"scp rc={p.returncode} {p.stderr[:200]}"
+                return False, f"scp rc={p.returncode} {(p.stderr or '')[:200]}"
             win_tmp = tmp.replace("/", "\\")
             win_fin = remote_final.replace("/", "\\")
-            m = subprocess.run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
-                                config.ZPC_HOST,
-                                f'powershell -NoProfile -Command Move-Item -Force "{win_tmp}" "{win_fin}"'],
-                               capture_output=True, timeout=60, text=True)
+            try:
+                m = _run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
+                          config.ZPC_HOST,
+                          f'powershell -NoProfile -Command Move-Item -Force "{win_tmp}" "{win_fin}"'], timeout=60)
+            except Exception as exc:
+                return False, f"move exception {exc}"
             return m.returncode == 0, (m.stdout or m.stderr or "")[:200]
 
         okp, dp = _scp_atomic(str(html_path), remote_file)
@@ -74,12 +96,14 @@ def _deploy(html_path: Path) -> tuple[bool, str]:
         okj, dj = _scp_atomic(str(config.SITE_DATA_OUT), remote_data_file)
         if not okj:
             return False, f"json {dj}"
-        q = subprocess.run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
-                            config.ZPC_HOST,
-                            'powershell -NoProfile -Command "(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8901/wandering-plan/ -TimeoutSec 10).StatusCode"'],
-                           capture_output=True, timeout=60, text=True)
-        ok = "200" in (q.stdout or "")
-        return ok, (q.stdout or q.stderr or "")[:200]
+        try:
+            q = _run([ssh, "-i", key, "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={kh}",
+                      config.ZPC_HOST,
+                      'powershell -NoProfile -Command "(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8901/wandering-plan/ -TimeoutSec 10).StatusCode"'], timeout=60)
+            ok = "200" in (q.stdout or "")
+            return ok, (q.stdout or q.stderr or "")[:200]
+        except Exception as exc:
+            return False, f"verify exception {exc}"
     except Exception as exc:
         return False, str(exc)
 
