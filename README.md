@@ -42,7 +42,7 @@ python -m src.daily_run：数据新鲜度检查 → 三路信号 → 组合排�
 
 ## 公网页面
 
-- 页面地址：https://<ZPC 隧道域名>/wandering-plan/ （隧道重启后域名会变，见 WeChat 通知或 ZPC 的 current_url.txt）
+- 页面地址：https://caize-bp.duckdns.org:41234/wandering-plan/ （固定 DuckDNS 域名，走樱花 FRP；不再使用 trycloudflare 临时域名）
 - 页面顶部「今日作战」：今日持仓、今日操作、明日买卖提醒（QL2 明日卖出会显示止损价）
 - 页面含资金曲线（逐笔复利，10 万起）、年度曲线、年度/个股/逐笔明细
 - 无需登录，不展示账本/个人信息
