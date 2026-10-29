@@ -284,11 +284,27 @@ def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp,
                        "buy_date": pd.Timestamp(s["buy_date"]).strftime("%Y-%m-%d"),
                        "sell_date": pd.Timestamp(s["sell_date"]).strftime("%Y-%m-%d") if s.get("sell_date") is not None else None}
                       for s in sig if pd.Timestamp(s["signal_date"]) == pd.Timestamp(eff_date)]
+    allocated_buys = {(a["symbol"], pd.Timestamp(a["buy_date"])) for a in allocated}
+    watch_signals, _seen_watch = [], set()
+    for s in sig:
+        if pd.Timestamp(s["signal_date"]) != pd.Timestamp(eff_date):
+            continue
+        key = (s["symbol"], pd.Timestamp(s["buy_date"]))
+        if key in allocated_buys or key in _seen_watch:
+            continue
+        _seen_watch.add(key)
+        watch_signals.append({
+            "symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
+            "signal_date": pd.Timestamp(s["signal_date"]).strftime("%Y-%m-%d"),
+            "buy_date": pd.Timestamp(s["buy_date"]).strftime("%Y-%m-%d"),
+            "sell_date": pd.Timestamp(s["sell_date"]).strftime("%Y-%m-%d") if s.get("sell_date") is not None else None,
+            "note": "未排上仓位，仅关注",
+        })
     return {"today": today.strftime("%Y-%m-%d"), "data_date": data_date.strftime("%Y-%m-%d"),
             "next_day": next_day.strftime("%Y-%m-%d") if next_day is not None else None,
             "holdings": holdings, "today_actions": today_actions,
             "tomorrow_actions": tomorrow_actions, "latest_signals": latest_signals,
-            "todo_days": todo_days}
+            "watch_signals": watch_signals, "todo_days": todo_days}
 
 
 def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,

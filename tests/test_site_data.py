@@ -30,6 +30,9 @@ class TestSiteData(unittest.TestCase):
         m = payload["meta"]
         for key in ("model", "version", "generated_at", "signal_as_of", "stale", "warnings"):
             self.assertIn(key, m)
+        self.assertIn("watch_signals", payload["dashboard"])
+        for _w in payload["dashboard"]["watch_signals"]:
+            self.assertIn("note", _w)
         self.assertEqual(m["version"], "1.1.0")
         self.assertTrue(any("v1.1" in w for w in m["warnings"]))
         self.assertIn("curve", payload)

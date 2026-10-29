@@ -90,6 +90,8 @@ DASH_SECTION = """  <section class="dash">
     <div class="dash-signals" id="dashSig">-</div>
     <div class="todo-head">交易日待办（不含明日）</div>
     <div class="todo-grid" id="dashTodo"></div>
+    <div class="todo-head" id="dashWatchHead" style="display:none">信号关注（未排上仓位）</div>
+    <div class="todo-grid" id="dashWatch"></div>
   </section>
 """
 
@@ -121,7 +123,7 @@ DASH_SCRIPT = """<script>
     if(!d||!d.dashboard)return;var x=d.dashboard;
     function g(id){return document.getElementById(id)}
     function money(v){if(v===null||v===undefined||isNaN(Number(v)))return "";var n=Number(v);return (n>=0?"+":"")+Math.round(n).toLocaleString("zh-CN")}
-    function timeBadge(a){return '<span class="d-time">'+esc(a.time)+" "+(a.action==="买入"?"买":"卖")+"</span>"}
+    function timeBadge(a){if(a.action==="观察")return '<span class="d-time">信号关注</span>';return '<span class="d-time">'+esc(a.time)+" "+(a.action==="买入"?"买":"卖")+"</span>"}
     function pnlHtml(pct,amount){if(pct===null||pct===undefined||isNaN(Number(pct)))return "";var cls=Number(pct)>=0?"pos":"neg";var h='<div class="d-pnl '+cls+'">'+(Number(pct)>=0?"+":"")+Number(pct).toFixed(2)+'%';if(amount!==null&&amount!==undefined&&!isNaN(Number(amount)))h+='<span class="d-amount">'+(Number(amount)>=0?"+":"")+Math.round(Number(amount)).toLocaleString("zh-CN")+' 元</span>';return h+'</div>'}
     function item(a){
       var right=a.action==="卖出"?pnlHtml(a.pnl_pct,a.pnl_amount):(a.price?'<div class="d-pnl">'+Number(a.price).toFixed(2)+'</div>':"");
@@ -134,7 +136,7 @@ DASH_SCRIPT = """<script>
       var sub=(h.entry!==null&&h.entry!==undefined)?('成本 '+Number(h.entry).toFixed(2)+'<br>计划 '+esc(h.sell_date||"-")+' 15:00 卖'):('计划 '+esc(h.buy_date)+' 09:30 买<br>'+esc(h.sell_date||"-")+' 15:00 卖');
       if(h.last)sub+='<br>现价 '+Number(h.last).toFixed(2);
       if(h.stop_px)sub+='<br>止损 '+Number(h.stop_px).toFixed(2);
-      return '<div class="d-item"><div><span class="d-code">'+esc(h.symbol)+'</span> <span class="d-name">'+esc(h.name)+'</span><div class="d-sub">'+esc(h.source)+' · '+sub+'</div></div>'+pnlHtml(h.pnl_pct,h.pnl_amount)+'</div>'
+      return '<div class="d-item"><div><span class="d-code">'+esc(h.symbol)+'</span> <span class="d-name">'+esc(h.name)+'</span><div class="d-sub">'+esc(h.source)+' · '+sub+'</div></div>'+pnlHtml(h.pnl_pct)+'</div>'
     }).join(""):'<div class="d-sub">空仓</div>';
     var today=(x.today_actions&&x.today_actions.length)?x.today_actions.map(item).join(""):'<div class="d-sub">无操作</div>';
     var tmr=(x.tomorrow_actions&&x.tomorrow_actions.length)?x.tomorrow_actions.map(item).join(""):'<div class="d-sub">无操作</div>';
@@ -150,6 +152,11 @@ DASH_SCRIPT = """<script>
     if(g("dashTmrTitle"))g("dashTmrTitle").textContent="明日买卖提醒（"+(x.next_day||"-")+"）";
     if(g("dashSig"))g("dashSig").innerHTML="今日信号（"+x.data_date+"）："+sig+(x.intraday_at?"　｜　盘中快照 "+esc(String(x.intraday_at).slice(11,16)):"");
     if(g("dashTodo"))g("dashTodo").innerHTML=todo;
+    var watch=(x.watch_signals&&x.watch_signals.length)?x.watch_signals.map(function(s){
+      return '<div class="todo-card"><div class="todo-date">'+esc(s.signal_date)+' 信号</div><div class="todo-item"><span><span class="d-code">'+esc(s.symbol)+'</span> <span class="d-name">'+esc(s.name)+'</span><div class="d-sub">'+esc(s.source)+' · 计划 '+esc(s.buy_date)+' 买入<br>'+esc(s.note||"仅关注")+'</div></span></div></div>'
+    }).join(""):"";
+    if(g("dashWatchHead"))g("dashWatchHead").style.display=watch?"block":"none";
+    if(g("dashWatch"))g("dashWatch").innerHTML=watch;
   }
 
   function scaleForYear(y){var arr=(WP&&WP.yearly)||[];for(var i=0;i<arr.length;i++){if(Number(arr[i].year)===Number(y)){var se=Number(arr[i].start_equity);return se?100000/se:1}}return 1}
