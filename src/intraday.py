@@ -106,6 +106,8 @@ def build_snapshot(payload: dict, now=None) -> tuple[dict, str]:
         if pos_amt <= 0:
             pos_amt = latest_equity() * config.SLOT_WEIGHT
         pnl_pct = (float(last) / float(entry) - 1.0) * 100.0
+        eq = latest_equity()
+        pos_pct = (float(pos_amt) / eq * 100.0) if eq else config.SLOT_WEIGHT * 100
         stop_px = round(float(entry) * (1.0 - config.QL2_STOP), 2) if a.get("source") == "QL2" else None
         holdings.append({
             "symbol": a["symbol"], "name": a.get("name") or names.name_of(a["symbol"]),
@@ -114,7 +116,7 @@ def build_snapshot(payload: dict, now=None) -> tuple[dict, str]:
             "sell_date": sd.strftime("%Y-%m-%d") if sd is not None else None,
             "entry": round(float(entry), 3), "last": round(float(last), 3),
             "pnl_pct": round(pnl_pct, 2), "pnl_amount": round(float(pos_amt) * pnl_pct / 100.0, 2),
-            "stop_px": stop_px, "quote_time": (q.get("time") if q else ""),
+            "position_pct": round(pos_pct, 2), "stop_px": stop_px, "quote_time": (q.get("time") if q else ""),
         })
         if len(holdings) >= config.SLOTS:
             break
@@ -128,7 +130,8 @@ def build_snapshot(payload: dict, now=None) -> tuple[dict, str]:
             px = q["open"] if q and q.get("open") else prices.open_on(a["symbol"], bd)
             actions.append({"symbol": a["symbol"], "name": a.get("name") or names.name_of(a["symbol"]), "source": a.get("source", ""),
                             "date": today.strftime("%Y-%m-%d"), "action": "买入", "time": "09:30",
-                            "price": round(float(px), 3) if px else None})
+                            "price": round(float(px), 3) if px else None,
+                            "position_pct": config.SLOT_WEIGHT * 100})
         if sd is not None and sd == today:
             tr = trade_of(a["symbol"], bd)
             entry = float(tr["buy_price"]) if tr and tr.get("buy_price") else prices.open_on(a["symbol"], bd)
@@ -138,7 +141,9 @@ def build_snapshot(payload: dict, now=None) -> tuple[dict, str]:
             it = {"symbol": a["symbol"], "name": a.get("name") or names.name_of(a["symbol"]),
                   "source": a.get("source", ""),
                   "date": today.strftime("%Y-%m-%d"), "action": "卖出", "time": "15:00",
-                  "entry": entry, "price": round(float(px), 3) if px else None}
+                  "entry": entry, "price": round(float(px), 3) if px else None,
+                  "position_pct": float(tr.get("position_pct")) if tr and tr.get("position_pct") is not None
+                  else config.SLOT_WEIGHT * 100}
             if entry and px:
                 it["pnl_pct"] = round((float(px) / float(entry) - 1.0) * 100.0, 2)
             if a.get("source") == "QL2" and entry:

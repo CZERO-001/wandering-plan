@@ -33,6 +33,10 @@ class TestSiteData(unittest.TestCase):
         self.assertIn("watch_signals", payload["dashboard"])
         for _w in payload["dashboard"]["watch_signals"]:
             self.assertIn("note", _w)
+        for _a in payload["dashboard"]["today_actions"] + payload["dashboard"]["tomorrow_actions"]:
+            self.assertIn("position_pct", _a)
+        for _s in payload["stocks"]:
+            self.assertIn("position_pct", _s)
         self.assertEqual(m["version"], "1.1.0")
         self.assertTrue(any("v1.1" in w for w in m["warnings"]))
         self.assertIn("curve", payload)

@@ -222,6 +222,8 @@ def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp,
         it = {"symbol": a["symbol"], "name": a.get("name", ""), "source": a["source"],
               "date": d.strftime("%Y-%m-%d"), "action": kind,
               "time": "09:30" if kind == "买入" else "15:00"}
+        pos = tr.get("position_pct") if tr and tr.get("position_pct") is not None else config.SLOT_WEIGHT * 100
+        it["position_pct"] = round(float(pos), 2)
         if kind == "买入":
             it["price"] = float(tr["buy_price"]) if tr and tr.get("buy_price") else prices.open_on(a["symbol"], d)
         else:
@@ -282,11 +284,12 @@ def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp,
                 ent = tr.get("buy_price") if tr and tr.get("buy_price") else entry
                 if ent:
                     stop_px = round(float(ent) * (1.0 - config.QL2_STOP), 2)
+            tr_pos = tr.get("position_pct") if tr and tr.get("position_pct") is not None else config.SLOT_WEIGHT * 100
             holdings.append({"symbol": a["symbol"], "name": a.get("name", ""), "source": a["source"],
                              "buy_date": bd.strftime("%Y-%m-%d"),
                              "sell_date": sd.strftime("%Y-%m-%d") if sd is not None else None,
                              "entry": entry, "last": last, "pnl_pct": pct, "pnl_amount": None,
-                             "stop_px": stop_px})
+                             "position_pct": round(float(tr_pos), 2), "stop_px": stop_px})
         if len(holdings) >= 2:
             break
 
@@ -322,7 +325,7 @@ def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp,
             "signal_date": pd.Timestamp(s["signal_date"]).strftime("%Y-%m-%d"),
             "buy_date": pd.Timestamp(s["buy_date"]).strftime("%Y-%m-%d"),
             "sell_date": pd.Timestamp(s["sell_date"]).strftime("%Y-%m-%d") if s.get("sell_date") is not None else None,
-            "note": "未排上仓位，仅关注",
+            "position_pct": 0.0, "note": "未排上仓位，仅关注",
         })
     return {"today": today.strftime("%Y-%m-%d"), "data_date": data_date.strftime("%Y-%m-%d"),
             "next_day": next_day.strftime("%Y-%m-%d") if next_day is not None else None,
@@ -484,7 +487,8 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         sym = t["symbol"]
         a = agg.setdefault(sym, {"symbol": sym, "name": t.get("name", ""),
                                  "board": t.get("board") or _board(sym),
-                                 "n": 0, "win": 0, "sum": 0.0, "net": 0.0, "last": ""})
+                                 "n": 0, "win": 0, "sum": 0.0, "net": 0.0, "last": "",
+                                 "position_pct": t.get("position_pct")})
         a["n"] += 1
         r = float(t.get("return_pct") or 0)
         a["sum"] += r
@@ -494,7 +498,10 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         d = str(t.get("sell_date") or t.get("buy_date") or "")
         if d > a["last"]:
             a["last"] = d
+            if t.get("position_pct") is not None:
+                a["position_pct"] = t.get("position_pct")
     stocks = [{"symbol": k, "name": v["name"], "board": v["board"],
+               "position_pct": v.get("position_pct"),
                "trades": v["n"], "win_rate": round(v["win"] / v["n"] * 100, 2),
                "avg_return": round(v["sum"] / v["n"], 2), "net_profit": round(v["net"], 2),
                "last_sell": v["last"]}
