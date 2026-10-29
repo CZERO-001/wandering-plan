@@ -26,6 +26,7 @@ def main() -> None:
     ap.add_argument("--out", default=str(OCT_DAILY))
     ap.add_argument("--source", choices=["pit", "raw_sina"], default="pit")
     ap.add_argument("--raw-dir", default=r"D:\AStockWorker\data\raw_sina")
+    ap.add_argument("--extra-csv", default=None, help="补充的逐日行情 CSV（symbol,date,open,high,low,close）")
     a = ap.parse_args()
     targets = [d.strip() for d in a.dates.split(",") if d.strip()]
 
@@ -73,6 +74,13 @@ def main() -> None:
             """
         ).fetchdf()
     con.close()
+    if a.extra_csv:
+        ex = pd.read_csv(a.extra_csv, encoding="utf-8-sig", dtype={"symbol": str})
+        ex["symbol"] = ex["symbol"].str.zfill(6)
+        ex["date"] = pd.to_datetime(ex["date"])
+        ex = ex.rename(columns={"open": "o", "high": "h", "low": "l", "close": "c"})[["date", "symbol", "o", "h", "l", "c"]]
+        df = pd.concat([df, ex], ignore_index=True)
+        df = df.drop_duplicates(["symbol", "date"], keep="last")
     df["date"] = pd.to_datetime(df["date"])
     rows = []
     for sym, g in df.groupby("symbol", sort=False):

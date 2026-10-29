@@ -49,6 +49,35 @@ def _bench_at(bench: pd.Series, d) -> float | None:
     return float(s.iloc[0]) if len(s) else None
 
 
+def _extend_bench(bench: pd.Series, data_date) -> pd.Series:
+    if bench.empty:
+        return bench
+    d = pd.Timestamp(data_date)
+    if bench.index.max() >= d:
+        return bench
+    try:
+        import urllib.request
+        req = urllib.request.Request("https://hq.sinajs.cn/list=sh000300",
+                                     headers={"Referer": "https://finance.sina.com.cn",
+                                              "User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            txt = r.read().decode("gbk", "replace")
+        f = txt.split('"')[1].split(",")
+        cur_date = pd.Timestamp(f[30])
+        close, prev = float(f[3]), float(f[2])
+        prev_day = pd.Timestamp(pd.bdate_range(end=cur_date, periods=2)[0])
+        add = {}
+        if prev_day > bench.index.max() and prev_day <= d:
+            add[prev_day] = prev
+        if cur_date > bench.index.max() and cur_date <= d:
+            add[cur_date] = close
+        if add:
+            bench = pd.concat([bench, pd.Series(add)]).sort_index()
+    except Exception:
+        pass
+    return bench
+
+
 def _enrich_curves(hist: dict) -> dict:
     """给 history 补 benchmark_curve / year_curves / yearly.benchmark_return。"""
     bench = _bench_series()
@@ -106,59 +135,142 @@ def _next_days(cal, data_date, n: int = 5) -> list[pd.Timestamp]:
     return days[:n]
 
 
-def _action_item(s: dict, kind: str) -> dict:
-    return {"symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
-            "date": (pd.Timestamp(s["buy_date"]) if kind == "买入" else pd.Timestamp(s["sell_date"])).strftime("%Y-%m-%d"),
-            "action": kind}
-
-
-def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp, data_date: pd.Timestamp) -> dict:
-    today = pd.Timestamp.today().normalize()
-    next_day = calendar_utils.next_trading_day(cal, today)
-    win = [d for d in cal if today <= d][:6]
-    win_set = set(win)
-
-    buys, sells = [], []
-    for s in sig:
-        if s.get("buy_date") is not None:
-            buys.append((pd.Timestamp(s["buy_date"]), s))
-        if s.get("sell_date") is not None:
-            sells.append((pd.Timestamp(s["sell_date"]), s))
-    actions = [(_action_item(s, "买入"), d) for d, s in buys] + [(_action_item(s, "卖出"), d) for d, s in sells]
-    actions = [(a, d) for a, d in actions if d in win_set or d == today]
-    actions.sort(key=lambda x: (x[0]["date"], 0 if x[0]["action"] == "买入" else 1))
-
-    today_actions = [a for a, d in actions if d == today]
-    tomorrow_actions = [a for a, d in actions if d == next_day]
-    plan = []
-    seen = set()
-    for a, d in actions:
-        if d <= today:
+def _replay_live(sig: list[dict], cal: list[pd.Timestamp], data_date, last_bt) -> list[dict]:
+    """按 QL2.0 规则（delay=2 hold=1 满 3 个交易日才接下一信号）与 2 槽/单路上限回放。"""
+    cal_idx = {pd.Timestamp(d): i for i, d in enumerate(cal)}
+    ql2 = sorted([s for s in sig if s["source"] == "QL2"], key=lambda s: pd.Timestamp(s["signal_date"]))
+    kept_ql2, last_si = [], None
+    gap = config.BUY_DELAY["QL2"] + config.SELL_DELAY["QL2"]
+    for s in ql2:
+        si = cal_idx.get(pd.Timestamp(s["signal_date"]))
+        if si is None:
             continue
-        key = (a["date"], a["action"], a["symbol"])
-        if key in seen:
+        if last_si is not None and si - last_si < gap:
             continue
-        seen.add(key)
-        plan.append(a)
-    holdings = []
-    for s in sorted(sig, key=lambda x: pd.Timestamp(x["buy_date"]), reverse=True):
+        kept_ql2.append(s)
+        last_si = si
+    cands = {}
+    for s in [x for x in sig if x["source"] != "QL2"] + kept_ql2:
+        if s.get("buy_date") is None:
+            continue
+        bd = pd.Timestamp(s["buy_date"])
+        if last_bt is not None and bd <= last_bt:
+            continue
+        key = (s["symbol"], bd)
+        cur = cands.get(key)
+        if cur is None or config.PRIORITY.index(s["source"]) < config.PRIORITY.index(cur["source"]):
+            cands[key] = s
+    ordered = sorted(cands.values(), key=lambda s: (pd.Timestamp(s["buy_date"]), config.PRIORITY.index(s["source"])))
+    allocated: list[dict] = []
+    for s in ordered:
         bd = pd.Timestamp(s["buy_date"])
         sd = pd.Timestamp(s["sell_date"]) if s.get("sell_date") is not None else None
-        if bd <= today and (sd is None or sd >= today):
-            holdings.append({"symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
+        active = [a for a in allocated if a["sell_date"] is not None and a["sell_date"] > bd]
+        if len(active) >= config.SLOTS:
+            continue
+        if sum(1 for a in active if a["source"] == s["source"]) >= config.MAX_PER_STREAM.get(s["source"], 1):
+            continue
+        allocated.append({"symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
+                          "signal_date": pd.Timestamp(s["signal_date"]),
+                          "buy_date": bd, "sell_date": sd})
+    return allocated
+
+
+def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp, data_date: pd.Timestamp,
+               allocated: list[dict], trades: list[dict] | None = None) -> dict:
+    from . import prices
+
+    today = pd.Timestamp.today().normalize()
+    next_day = calendar_utils.next_trading_day(cal, today)
+    data_date = pd.Timestamp(data_date)
+    trade_map = {}
+    for t in (trades or []):
+        trade_map[(t.get("symbol"), str(t.get("buy_date")))] = t
+
+    def _trade_of(sym, bd):
+        return trade_map.get((sym, str(pd.Timestamp(bd).strftime("%Y-%m-%d"))))
+
+    def _item(a, kind, show_pnl=False):
+        d = pd.Timestamp(a["buy_date"]) if kind == "买入" else (pd.Timestamp(a["sell_date"]) if a.get("sell_date") is not None else None)
+        if d is None:
+            return None
+        it = {"symbol": a["symbol"], "name": a.get("name", ""), "source": a["source"],
+              "date": d.strftime("%Y-%m-%d"), "action": kind,
+              "time": "09:30" if kind == "买入" else "15:00"}
+        if kind == "买入":
+            it["price"] = prices.open_on(a["symbol"], d)
+        else:
+            entry = prices.open_on(a["symbol"], pd.Timestamp(a["buy_date"]))
+            exitp = prices.close_on(a["symbol"], d)
+            if exitp is None:
+                exitp = prices.close_on_or_before(a["symbol"], data_date)[1]
+            it["entry"] = entry
+            it["price"] = exitp
+            if show_pnl:
+                tr = _trade_of(a["symbol"], a["buy_date"])
+                if tr is not None:
+                    it["pnl_pct"], it["pnl_amount"] = tr.get("return_pct"), tr.get("net_profit")
+        return it
+
+    order = {"买入": 0, "卖出": 1}
+    today_actions, tomorrow_actions = [], []
+    for a in allocated:
+        bd, sd = a["buy_date"], a.get("sell_date")
+        if bd == today:
+            today_actions.append(_item(a, "买入"))
+        if sd is not None and sd == today:
+            today_actions.append(_item(a, "卖出", True))
+        if next_day is not None and bd == next_day:
+            tomorrow_actions.append(_item(a, "买入"))
+        if next_day is not None and sd is not None and sd == next_day:
+            tomorrow_actions.append(_item(a, "卖出", True))
+    today_actions = [x for x in today_actions if x]
+    tomorrow_actions = [x for x in tomorrow_actions if x]
+    today_actions.sort(key=lambda x: order.get(x["action"], 9))
+    tomorrow_actions.sort(key=lambda x: order.get(x["action"], 9))
+
+    holdings = []
+    for a in sorted(allocated, key=lambda x: x["buy_date"], reverse=True):
+        bd, sd = a["buy_date"], a.get("sell_date")
+        if bd < today and (sd is None or sd > today):
+            entry = prices.open_on(a["symbol"], bd)
+            last = prices.close_on(a["symbol"], data_date)
+            if last is None:
+                last = prices.close_on_or_before(a["symbol"], data_date)[1]
+            tr = _trade_of(a["symbol"], bd)
+            pct = tr.get("return_pct") if tr else None
+            if pct is None and entry and last:
+                pct = round((last / entry - 1) * 100, 2)
+            holdings.append({"symbol": a["symbol"], "name": a.get("name", ""), "source": a["source"],
                              "buy_date": bd.strftime("%Y-%m-%d"),
-                             "sell_date": sd.strftime("%Y-%m-%d") if sd is not None else None})
+                             "sell_date": sd.strftime("%Y-%m-%d") if sd is not None else None,
+                             "entry": entry, "last": last, "pnl_pct": pct, "pnl_amount": None})
         if len(holdings) >= 2:
             break
-    todays = [{"symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
-               "signal_date": pd.Timestamp(s["signal_date"]).strftime("%Y-%m-%d"),
-               "buy_date": pd.Timestamp(s["buy_date"]).strftime("%Y-%m-%d"),
-               "sell_date": pd.Timestamp(s["sell_date"]).strftime("%Y-%m-%d") if s.get("sell_date") is not None else None}
-              for s in sig if pd.Timestamp(s["signal_date"]) == pd.Timestamp(eff_date)]
+
+    future_days = [d for d in cal if next_day is not None and pd.Timestamp(d) > next_day][:6]
+    future_set = {pd.Timestamp(d) for d in future_days}
+    todo: dict[str, list[dict]] = {}
+    for a in allocated:
+        for kind, d in (("买入", a["buy_date"]), ("卖出", a.get("sell_date"))):
+            if d is None or pd.Timestamp(d) not in future_set:
+                continue
+            it = _item(a, kind)
+            if it:
+                todo.setdefault(pd.Timestamp(d).strftime("%Y-%m-%d"), []).append(it)
+    todo_days = [{"date": k, "items": sorted(v, key=lambda x: order.get(x["action"], 9))}
+                 for k, v in sorted(todo.items())]
+
+    latest_signals = [{"symbol": s["symbol"], "name": s.get("name", ""), "source": s["source"],
+                       "signal_date": pd.Timestamp(s["signal_date"]).strftime("%Y-%m-%d"),
+                       "buy_date": pd.Timestamp(s["buy_date"]).strftime("%Y-%m-%d"),
+                       "sell_date": pd.Timestamp(s["sell_date"]).strftime("%Y-%m-%d") if s.get("sell_date") is not None else None}
+                      for s in sig if pd.Timestamp(s["signal_date"]) == pd.Timestamp(eff_date)]
     return {"today": today.strftime("%Y-%m-%d"), "data_date": data_date.strftime("%Y-%m-%d"),
             "next_day": next_day.strftime("%Y-%m-%d") if next_day is not None else None,
             "holdings": holdings, "today_actions": today_actions,
-            "tomorrow_actions": tomorrow_actions, "latest_signals": todays, "plan": plan[:12]}
+            "tomorrow_actions": tomorrow_actions, "latest_signals": latest_signals,
+            "todo_days": todo_days}
 
 
 def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
@@ -174,6 +286,11 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
     sig_dates = [pd.Timestamp(s["signal_date"]) for s in sig if pd.Timestamp(s["signal_date"]) <= data_date]
     eff_date = max(sig_dates) if sig_dates else data_date
     next_day = calendar_utils.next_trading_day(cal, data_date)
+    hist_trades = list(hist.get("trades", []))
+    last_bt = max((pd.Timestamp(t["sell_date"]) for t in hist_trades if t.get("sell_date")), default=None)
+    curve_list = hist.get("curve") or []
+    allocated = _replay_live(sig, cal, data_date, last_bt)
+    alloc_buys = {(a["symbol"], a["buy_date"]) for a in allocated}
     todays = []
     seen_sig = set()
     for s in sig:
@@ -187,12 +304,11 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         seen_sig.add(key)
         todays.append(s)
 
-    selected = {(b["symbol"], pd.Timestamp(b["buy_date"])) for b in plan.get("buys", [])}
     candidates = []
     for s in sorted(todays, key=lambda x: (x["source"], x["symbol"])):
         key = (s["symbol"], pd.Timestamp(s["buy_date"]))
-        chosen = key in selected
-        decision = "计划买入" if chosen else ("候选（未进仓位）" if plan.get("buys") else "不买")
+        chosen = key in alloc_buys
+        decision = "计划买入" if chosen else "候选（未进仓位）"
         candidates.append({
             "symbol": s["symbol"],
             "name": s.get("name", ""),
@@ -235,6 +351,159 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
             })
     pending.sort(key=lambda x: (x["action_date"], 0 if x["decision"] == "计划买入" else 1))
 
+    # ---- 按槽位/单路上限回放后的实盘成交并入逐笔与个股 ----
+    from . import prices as _prices
+    live_rows = []
+    for a in allocated:
+        bd = a["buy_date"]
+        if bd > data_date:
+            continue
+        entry = _prices.open_on(a["symbol"], bd)
+        if entry is None:
+            continue
+        sd = a.get("sell_date")
+        closed = sd is not None and sd <= data_date
+        if closed:
+            exitp = _prices.close_on(a["symbol"], sd)
+            status = "已平仓"
+        else:
+            exitp = _prices.close_on_or_before(a["symbol"], data_date)[1]
+            status = "持仓中"
+        if exitp is None:
+            continue
+        ret = exitp / entry - 1.0 - config.COST
+        live_rows.append({
+            "symbol": a["symbol"], "name": a.get("name", ""), "board": _board(a["symbol"]),
+            "source": a["source"], "year": int(bd.year),
+            "signal_date": pd.Timestamp(a["signal_date"]).strftime("%Y-%m-%d"),
+            "buy_date": bd.strftime("%Y-%m-%d"),
+            "sell_date": sd.strftime("%Y-%m-%d") if closed else None,
+            "buy_price": round(float(entry), 2),
+            "sell_price": round(float(exitp), 2) if closed else None,
+            "return_pct": round(ret * 100, 2),
+            "net_profit": 0.0,
+            "position_amount": 0.0, "position_pct": 50.0,
+            "balance_after": 0.0,
+            "exit_reason": "TIME" if closed else "持仓中",
+            "hit_count": 1, "weight": 50.0,
+            "buy_time": "09:30", "sell_time": "15:00",
+            "status": status,
+        })
+    trades = hist_trades + live_rows
+    live_rows.sort(key=lambda r: (r.get("sell_date") or "9999-12-31", r["buy_date"]))
+    _eq = float(curve_list[-1]["equity"]) if curve_list else float(config.INITIAL_CAPITAL)
+    for _r in live_rows:
+        _ret = float(_r["return_pct"]) / 100.0
+        _pos = _eq * config.SLOT_WEIGHT
+        _pnl = _pos * _ret
+        _r["position_amount"] = round(_pos, 2)
+        _r["net_profit"] = round(_pnl, 2)
+        _r["balance_after"] = round(_eq + _pnl, 2)
+        _eq = _eq + _pnl
+    final_eq = _eq
+    agg = {}
+    for t in trades:
+        sym = t["symbol"]
+        a = agg.setdefault(sym, {"symbol": sym, "name": t.get("name", ""),
+                                 "board": t.get("board") or _board(sym),
+                                 "n": 0, "win": 0, "sum": 0.0, "net": 0.0, "last": ""})
+        a["n"] += 1
+        r = float(t.get("return_pct") or 0)
+        a["sum"] += r
+        a["net"] += float(t.get("net_profit") or 0)
+        if r > 0:
+            a["win"] += 1
+        d = str(t.get("sell_date") or t.get("buy_date") or "")
+        if d > a["last"]:
+            a["last"] = d
+    stocks = [{"symbol": k, "name": v["name"], "board": v["board"],
+               "trades": v["n"], "win_rate": round(v["win"] / v["n"] * 100, 2),
+               "avg_return": round(v["sum"] / v["n"], 2), "net_profit": round(v["net"], 2),
+               "last_sell": v["last"]}
+              for k, v in agg.items()]
+    stocks.sort(key=lambda x: x["last_sell"], reverse=True)
+
+    # ---- 曲线 / 基准 / 年化 / 回撤同步到最新（含 10 月实盘） ----
+    curve = [dict(x) for x in curve_list]
+    for _r in live_rows:
+        if _r.get("sell_date"):
+            curve.append({"date": _r["sell_date"], "equity": float(_r["balance_after"])})
+    curve.append({"date": pd.Timestamp(data_date).strftime("%Y-%m-%d"), "equity": round(final_eq, 2)})
+    _cmap = {}
+    for _p in curve:
+        _cmap[pd.Timestamp(_p["date"])] = float(_p["equity"])
+    curve = [{"date": _d.strftime("%Y-%m-%d"), "equity": round(_v, 2),
+              "return_pct": round((_v / config.INITIAL_CAPITAL - 1) * 100, 2)}
+             for _d, _v in sorted(_cmap.items())]
+    hist["curve"] = curve
+
+    bench = _extend_bench(_bench_series(), data_date)
+    b0 = _bench_at(bench, curve[0]["date"])
+    bcurve = []
+    for _p in curve:
+        _b = _bench_at(bench, _p["date"])
+        if _b is None or not b0:
+            continue
+        bcurve.append({"date": _p["date"], "equity": round(100000.0 * _b / b0, 2),
+                       "return_pct": round((_b / b0 - 1) * 100, 2)})
+    hist["benchmark_curve"] = bcurve
+    hist["meta_benchmark_as_of"] = bench.index.max().strftime("%Y-%m-%d") if len(bench) else None
+
+    yearly = hist.get("yearly", [])
+    year_curves = {}
+    for _y in yearly:
+        _yy = str(_y["year"])
+        _arr = [x for x in curve if str(x["date"]).startswith(_yy)]
+        if not _arr:
+            continue
+        _prev = [x for x in curve if pd.Timestamp(x["date"]) < pd.Timestamp(f"{_yy}-01-01")]
+        _start_eq = float(_prev[-1]["equity"]) if _prev else float(config.INITIAL_CAPITAL)
+        _y["start_equity"] = round(_start_eq, 2)
+        _y["year_return"] = round(_arr[-1]["equity"] / _start_eq - 1, 6)
+        _nd = len([d for d in cal if pd.Timestamp(f"{_yy}-01-01") <= pd.Timestamp(d) <= pd.Timestamp(_arr[-1]["date"])])
+        _y["trading_days"] = int(_nd)
+        _complete = pd.Timestamp(data_date) >= pd.Timestamp(f"{int(_yy)}-12-31")
+        _y["partial"] = not _complete
+        if _complete:
+            # 完整年度本身就是一年，年化=当年收益，不再用 252/交易日放大
+            _y["annualized_return"] = round(_y["year_return"], 6)
+        else:
+            _y["annualized_return"] = round((1 + _y["year_return"]) ** (252.0 / max(_nd, 1)) - 1, 6)
+        _vals = [_start_eq] + [x["equity"] for x in _arr]
+        _ss = pd.Series(_vals)
+        _y["max_drawdown"] = round(float((_ss / _ss.cummax() - 1).min()), 6)
+        _sub = [t for t in trades if int(t.get("year") or 0) == int(_y["year"])]
+        _y["trades"] = len(_sub)
+        _y["net_profit"] = round(sum(float(t.get("net_profit") or 0) for t in _sub), 2)
+        if _sub:
+            _y["win_rate"] = round(sum(1 for t in _sub if float(t.get("return_pct") or 0) > 0) / len(_sub) * 100, 2)
+        _b0 = _bench_at(bench, _arr[0]["date"])
+        _strat = [{"date": x["date"], "equity": round(100000.0 * x["equity"] / _start_eq, 2),
+                   "return_pct": round((x["equity"] / _start_eq - 1) * 100, 2)} for x in _arr]
+        _by = []
+        for x in _arr:
+            _b = _bench_at(bench, x["date"])
+            if _b is None or not _b0:
+                continue
+            _by.append({"date": x["date"], "equity": round(100000.0 * _b / _b0, 2),
+                        "return_pct": round((_b / _b0 - 1) * 100, 2)})
+        _y["benchmark_return"] = (_by[-1]["return_pct"] / 100.0) if _by else None
+        year_curves[_yy] = {"base_date": _arr[0]["date"], "strategy": _strat, "benchmark": _by}
+    hist["year_curves"] = year_curves
+
+    overall = dict(hist.get("overall", {}))
+    _fd = pd.Timestamp(curve[0]["date"]); _ld = pd.Timestamp(curve[-1]["date"])
+    _years = max((_ld - _fd).days / 365.25, 0.1)
+    _total = final_eq / config.INITIAL_CAPITAL - 1
+    _eqs = pd.Series([x["equity"] for x in curve])
+    _mdd = float((_eqs / _eqs.cummax() - 1).min())
+    overall["total_return"] = round(_total, 6)
+    overall["total_profit"] = round(final_eq - config.INITIAL_CAPITAL, 2)
+    overall["annualized_return"] = round((1 + _total) ** (1 / _years) - 1, 6)
+    overall["max_drawdown"] = round(_mdd, 6)
+    overall["calmar"] = round(overall["annualized_return"] / abs(_mdd), 3) if _mdd else None
+    overall["closed_trades"] = sum(1 for t in trades if t.get("sell_date"))
+
     warnings = []
     if stale:
         warnings.append(f"数据只到 {data_date.date()}（最近交易日 {expected_last}），以下为旧信号，请勿照做。")
@@ -274,17 +543,17 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
     }
     return {
         "meta": meta,
-        "overall": hist.get("overall", {}),
+        "overall": overall,
         "yearly": hist.get("yearly", []),
         "latest": {"signal_date": eff_date.strftime("%Y-%m-%d"), "candidates": candidates},
         "pending": pending,
         "future_window": [],
-        "stocks": hist.get("stocks", []),
-        "trades": hist.get("trades", []),
+        "stocks": stocks,
+        "trades": trades,
         "curve": hist.get("curve", []),
         "benchmark_curve": hist.get("benchmark_curve", []),
         "year_curves": hist.get("year_curves", {}),
-        "dashboard": _dashboard(sig, cal, eff_date, data_date),
+        "dashboard": _dashboard(sig, cal, eff_date, data_date, allocated, trades),
     }
 
 

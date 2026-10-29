@@ -31,6 +31,12 @@ def signal_date_of(buy: pd.Timestamp, delay: int, cal) -> pd.Timestamp:
     return calendar_utils.shift(cal, buy, -delay) or buy
 
 
+def _year_mdd(equity: pd.DataFrame, year: int, start_eq: float) -> float:
+    vals = [float(start_eq)] + [float(v) for v in equity[equity["year"] == year]["equity"]]
+    s = pd.Series(vals)
+    return float((s / s.cummax() - 1.0).min())
+
+
 def main() -> None:
     cal = calendar_utils.trade_calendar()
     df = pd.read_csv(SRC, dtype={"symbol": str})
@@ -97,7 +103,7 @@ def main() -> None:
             "trading_days": int(n_days),
             "year_return": round(yr_ret, 6),
             "annualized_return": round(ann, 6),
-            "max_drawdown": round(float(((equity[equity.year == y]["equity"].cummax() - equity[equity.year == y]["equity"]) / equity[equity.year == y]["equity"].cummax()).min()), 6) if (equity.year == y).sum() > 1 else 0.0,
+            "max_drawdown": round(_year_mdd(equity, y, start_eq), 6),
             "first_buy": sub["buy_date"].min(),
             "last_sell": sub["sell_date"].max(),
             "trades": int(len(sub)),
