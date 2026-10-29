@@ -269,7 +269,7 @@ def _dashboard(sig: list[dict], cal: list[pd.Timestamp], eff_date: pd.Timestamp,
     holdings = []
     for a in sorted(allocated, key=lambda x: x["buy_date"], reverse=True):
         bd, sd = a["buy_date"], a.get("sell_date")
-        if bd < today and (sd is None or sd > today):
+        if bd <= today and (sd is None or sd > today):
             entry = prices.open_on(a["symbol"], bd)
             last = prices.close_on(a["symbol"], data_date)
             if last is None:
@@ -488,7 +488,8 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
         a = agg.setdefault(sym, {"symbol": sym, "name": t.get("name", ""),
                                  "board": t.get("board") or _board(sym),
                                  "n": 0, "win": 0, "sum": 0.0, "net": 0.0, "last": "",
-                                 "position_pct": t.get("position_pct")})
+                                 "position_pct": t.get("position_pct"),
+                                 "last_buy_price": None, "last_sell_price": None})
         a["n"] += 1
         r = float(t.get("return_pct") or 0)
         a["sum"] += r
@@ -500,8 +501,11 @@ def build(plan: dict, signals: list[dict], cal: list[pd.Timestamp], data_date,
             a["last"] = d
             if t.get("position_pct") is not None:
                 a["position_pct"] = t.get("position_pct")
+            a["last_buy_price"] = t.get("buy_price")
+            a["last_sell_price"] = t.get("sell_price")
     stocks = [{"symbol": k, "name": v["name"], "board": v["board"],
                "position_pct": v.get("position_pct"),
+               "last_buy_price": v.get("last_buy_price"), "last_sell_price": v.get("last_sell_price"),
                "trades": v["n"], "win_rate": round(v["win"] / v["n"] * 100, 2),
                "avg_return": round(v["sum"] / v["n"], 2), "net_profit": round(v["net"], 2),
                "last_sell": v["last"]}

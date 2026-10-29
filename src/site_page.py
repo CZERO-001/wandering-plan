@@ -171,9 +171,11 @@ DASH_SCRIPT = """<script>
       var gainHtml=(gain===null)?'<td>-</td>':'<td class='+Q+(gain>=0?"pos":"neg")+Q+'>'+(gain>=0?"+":"")+(gain*100).toFixed(2)+'%</td>';
       var balHtml=(bal===null)?'<td>-</td>':'<td>'+fmtMoney(bal)+'</td>';
       var pos=(t.position_pct===null||t.position_pct===undefined)?"-":Number(t.position_pct).toFixed(1)+"%";
-      return "<tr><td>"+esc(t.buy_date)+(t.buy_time?" "+esc(t.buy_time):"")+"</td><td>"+(t.sell_date?esc(t.sell_date)+(t.sell_time?" "+esc(t.sell_time):"")+(t.exit_reason==="STOP"?" 止损":""):"持仓中")+"</td><td>"+esc(t.symbol)+"</td><td>"+esc(t.name)+"</td><td>"+esc(t.source||"")+"</td><td>"+pos+"</td><td>"+Number(t.return_pct).toFixed(2)+"%</td><td class="+Q+cls+Q+">"+fmtMoney(pv)+"</td>"+gainHtml+balHtml+"</tr>"
+      var bp=(t.buy_price===null||t.buy_price===undefined)?"-":Number(t.buy_price).toFixed(2);
+      var sp=(t.sell_price===null||t.sell_price===undefined)?"-":Number(t.sell_price).toFixed(2);
+      return "<tr><td>"+esc(t.buy_date)+(t.buy_time?" "+esc(t.buy_time):"")+"</td><td>"+(t.sell_date?esc(t.sell_date)+(t.sell_time?" "+esc(t.sell_time):"")+(t.exit_reason==="STOP"?" 止损":""):"持仓中")+"</td><td>"+esc(t.symbol)+"</td><td>"+esc(t.name)+"</td><td>"+bp+"</td><td>"+sp+"</td><td>"+esc(t.source||"")+"</td><td>"+pos+"</td><td>"+Number(t.return_pct).toFixed(2)+"%</td><td class="+Q+cls+Q+">"+fmtMoney(pv)+"</td>"+gainHtml+balHtml+"</tr>"
     }).join("");
-    return '<div class="table-wrap" style="overflow-x:auto"><table><thead><tr><th>买入</th><th>卖出</th><th>代码</th><th>名称</th><th>策略</th><th>仓位</th><th>单笔涨跌</th><th>按当年10万折算盈亏</th><th>当年收益</th><th>折算余额</th></tr></thead><tbody>'+trs+"</tbody></table></div>"
+    return '<div class="table-wrap" style="overflow-x:auto"><table><thead><tr><th>买入</th><th>卖出</th><th>代码</th><th>名称</th><th>买入价</th><th>卖出价</th><th>策略</th><th>仓位</th><th>单笔涨跌</th><th>按当年10万折算盈亏</th><th>当年收益</th><th>折算余额</th></tr></thead><tbody>'+trs+"</tbody></table></div>"
   }
   function yearStart(y){var arr=(WP&&WP.yearly)||[];for(var i=0;i<arr.length;i++){if(Number(arr[i].year)===Number(y)){return Number(arr[i].start_equity)||null}}return null}
   function showYear(y){

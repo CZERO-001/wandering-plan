@@ -37,6 +37,8 @@ class TestSiteData(unittest.TestCase):
             self.assertIn("position_pct", _a)
         for _s in payload["stocks"]:
             self.assertIn("position_pct", _s)
+            self.assertIn("last_buy_price", _s)
+            self.assertIn("last_sell_price", _s)
         self.assertEqual(m["version"], "1.1.0")
         self.assertTrue(any("v1.1" in w for w in m["warnings"]))
         self.assertIn("curve", payload)
